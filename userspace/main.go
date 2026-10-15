@@ -128,8 +128,9 @@ func main() {
 		ProgExecve    *ebpf.Program `ebpf:"trace_execve"`
 		ProgConnect   *ebpf.Program `ebpf:"trace_connect"`
 		ProgPtrace    *ebpf.Program `ebpf:"trace_ptrace"`
-    		ProgUnlinkat  *ebpf.Program `ebpf:"trace_unlinkat"`
+    	ProgUnlinkat  *ebpf.Program `ebpf:"trace_unlinkat"`
 		Events        *ebpf.Map     `ebpf:"events"`
+		EnforcementMap *ebpf.Map     `ebpf:"enforcement_map"`
 	}
 	if err := spec.LoadAndAssign(&objs, nil); err != nil {
 		log.Fatalf("Failed to load and assign eBPF objects: %v", err)
@@ -140,7 +141,10 @@ func main() {
 	defer objs.ProgOpen.Close()
 	defer objs.ProgExecve.Close()
 	defer objs.ProgConnect.Close()
+	defer objs.ProgPtrace.Close()
+	defer objs.ProgUnlinkat.Close()
 	defer objs.Events.Close()
+	defer objs.EnforcementMap.Close()
 
 	kpUnshare, err := link.Kprobe("__x64_sys_unshare", objs.ProgUnshare, nil)
 	if err != nil {
@@ -189,6 +193,13 @@ func main() {
     		log.Fatalf("Failed to attach unlinkat tracepoint: %v", err)
 	}
 	defer tpUnlinkat.Close()
+
+	enforceVal := uint32(1)
+	err = objs.EnforcementMap.Put(uint32(0), enforceVal)
+	if err != nil {
+		log.Fatalf("[-] Failed to set enforcement mode: %v", err)
+	}
+	log.Println("[+] Active Defense (Enforcement Mode) ENABLED: Malicious actions will be terminated instantly.")
 
 	log.Printf("[-] EDR Engine active. Streaming structured JSON security events to stdout + %s", logPath)
 
