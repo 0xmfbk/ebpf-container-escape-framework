@@ -41,20 +41,20 @@ type event_t struct {
 }
 
 type SecurityAlert struct {
-    Timestamp   string `json:"timestamp"`
-    PID         uint32 `json:"pid"`
-    UID         uint32 `json:"uid"`
-    Command     string `json:"command"`
-    Action      string `json:"action"`
-    Target      string `json:"target,omitempty"`
-    Severity    string `json:"severity"`
-    MitreID     string `json:"mitre_id"`
-    MitreTechnique string `json:"mitre_technique"`
-    CgroupID    uint64 `json:"cgroup_id"`
-    ContainerID string `json:"container_id,omitempty"`
-    Runtime     string `json:"runtime"`
-    DestIP      string `json:"dest_ip,omitempty"`
-    DestPort    uint16 `json:"dest_port,omitempty"`
+	Timestamp      string `json:"timestamp"`
+	PID            uint32 `json:"pid"`
+	UID            uint32 `json:"uid"`
+	Command        string `json:"command"`
+	Action         string `json:"action"`
+	Target         string `json:"target,omitempty"`
+	Severity       string `json:"severity"`
+	MitreID        string `json:"mitre_id"`
+	MitreTechnique string `json:"mitre_technique"`
+	CgroupID       uint64 `json:"cgroup_id"`
+	ContainerID    string `json:"container_id,omitempty"`
+	Runtime        string `json:"runtime"`
+	DestIP         string `json:"dest_ip,omitempty"`
+	DestPort       uint16 `json:"dest_port,omitempty"`
 }
 
 var suspiciousPorts = map[uint16]bool{
@@ -70,30 +70,30 @@ func formatIPv4(ip [4]byte) string {
 }
 
 func calculateSeverity(action, command, target string, destPort uint16) (string, string, string) {
-    switch action {
-    case "Container_Pivot_Root_Escape":
-        return "CRITICAL", "T1611", "Escape to Host"
-    case "Container_Namespace_Unshare":
-        return "HIGH", "T1611", "Escape to Host"
-    case "Sensitive_File_Access":
-        return "HIGH", "T1003.008", "OS Credential Dumping: /etc/shadow"
-    case "Process_Injection":
-        return "HIGH", "T1055.008", "Process Injection: PTRACE"
-    case "Log_Tampering":
-        return "HIGH", "T1562.001", "Impair Defenses: Indicator Blocking"
-    case "Network_Connection":
-        if suspiciousPorts[destPort] {
-            return "HIGH", "T1071", "Application Layer Protocol (Suspicious Port)"
-        }
-        return "INFO", "T1071", "Application Layer Protocol"
-    case "Process_Execution":
-        if target == "/bin/sh" || target == "/bin/bash" || command == "python3" || command == "nc" {
-            return "MEDIUM", "T1059.004", "Command and Scripting Interpreter: Unix Shell"
-        }
-        return "INFO", "T1059.004", "Command and Scripting Interpreter"
-    default:
-        return "INFO", "T1204", "User Execution"
-    }
+	switch action {
+	case "Container_Pivot_Root_Escape":
+		return "CRITICAL", "T1611", "Escape to Host"
+	case "Container_Namespace_Unshare":
+		return "HIGH", "T1611", "Escape to Host"
+	case "Sensitive_File_Access":
+		return "HIGH", "T1003.008", "OS Credential Dumping: /etc/shadow"
+	case "Process_Injection":
+		return "HIGH", "T1055.008", "Process Injection: PTRACE"
+	case "Log_Tampering":
+		return "HIGH", "T1562.001", "Impair Defenses: Indicator Blocking"
+	case "Network_Connection":
+		if suspiciousPorts[destPort] {
+			return "HIGH", "T1071", "Application Layer Protocol (Suspicious Port)"
+		}
+		return "INFO", "T1071", "Application Layer Protocol"
+	case "Process_Execution":
+		if target == "/bin/sh" || target == "/bin/bash" || command == "python3" || command == "nc" {
+			return "MEDIUM", "T1059.004", "Command and Scripting Interpreter: Unix Shell"
+		}
+		return "INFO", "T1059.004", "Command and Scripting Interpreter"
+	default:
+		return "INFO", "T1204", "User Execution"
+	}
 }
 
 type agentStats struct {
@@ -128,9 +128,8 @@ func main() {
 		ProgExecve    *ebpf.Program `ebpf:"trace_execve"`
 		ProgConnect   *ebpf.Program `ebpf:"trace_connect"`
 		ProgPtrace    *ebpf.Program `ebpf:"trace_ptrace"`
-    	ProgUnlinkat  *ebpf.Program `ebpf:"trace_unlinkat"`
+		ProgUnlinkat  *ebpf.Program `ebpf:"trace_unlinkat"`
 		Events        *ebpf.Map     `ebpf:"events"`
-		EnforcementMap *ebpf.Map     `ebpf:"enforcement_map"`
 	}
 	if err := spec.LoadAndAssign(&objs, nil); err != nil {
 		log.Fatalf("Failed to load and assign eBPF objects: %v", err)
@@ -144,7 +143,6 @@ func main() {
 	defer objs.ProgPtrace.Close()
 	defer objs.ProgUnlinkat.Close()
 	defer objs.Events.Close()
-	defer objs.EnforcementMap.Close()
 
 	kpUnshare, err := link.Kprobe("__x64_sys_unshare", objs.ProgUnshare, nil)
 	if err != nil {
@@ -181,25 +179,18 @@ func main() {
 		log.Fatalf("Failed to attach connect tracepoint: %v", err)
 	}
 	defer tpConnect.Close()
-	
+
 	tpPtrace, err := link.Tracepoint("syscalls", "sys_enter_ptrace", objs.ProgPtrace, nil)
 	if err != nil {
-    		log.Fatalf("Failed to attach ptrace tracepoint: %v", err)
+		log.Fatalf("Failed to attach ptrace tracepoint: %v", err)
 	}
 	defer tpPtrace.Close()
 
 	tpUnlinkat, err := link.Tracepoint("syscalls", "sys_enter_unlinkat", objs.ProgUnlinkat, nil)
 	if err != nil {
-    		log.Fatalf("Failed to attach unlinkat tracepoint: %v", err)
+		log.Fatalf("Failed to attach unlinkat tracepoint: %v", err)
 	}
 	defer tpUnlinkat.Close()
-
-	enforceVal := uint32(1)
-	err = objs.EnforcementMap.Put(uint32(0), enforceVal)
-	if err != nil {
-		log.Fatalf("[-] Failed to set enforcement mode: %v", err)
-	}
-	log.Println("[+] Active Defense (Enforcement Mode) ENABLED: Malicious actions will be terminated instantly.")
 
 	log.Printf("[-] EDR Engine active. Streaming structured JSON security events to stdout + %s", logPath)
 
@@ -236,7 +227,6 @@ func main() {
 			select {
 			case eventChan <- rawEvent{data: buf}:
 			default:
-
 				atomic.AddUint64(&stats.eventsDropped, 1)
 			}
 		}
@@ -268,25 +258,25 @@ func main() {
 				destIPStr = formatIPv4(event.DestIP)
 				target = fmt.Sprintf("%s:%d", destIPStr, event.DestPort)
 			default:
-				target = "" 
+				target = ""
 			}
 
 			alert := SecurityAlert{
-			Timestamp:      time.Now().UTC().Format(time.RFC3339),
-    			PID:            event.Pid,
-    			UID:            event.Uid,
-    			Command:        comm,
-    			Action:         action,
-    			Target:         target,
-    			Severity:       severity,
-    			MitreID:        mitreID,
-    			MitreTechnique: mitreTechnique,
-    			CgroupID:       event.CgroupID,
-    			ContainerID:    container.ContainerID,
-    			Runtime:        container.Runtime,
-    			DestIP:         destIPStr,
-    			DestPort:       event.DestPort,
-		}
+				Timestamp:      time.Now().UTC().Format(time.RFC3339),
+				PID:            event.Pid,
+				UID:            event.Uid,
+				Command:        comm,
+				Action:         action,
+				Target:         target,
+				Severity:       severity,
+				MitreID:        mitreID,
+				MitreTechnique: mitreTechnique,
+				CgroupID:       event.CgroupID,
+				ContainerID:    container.ContainerID,
+				Runtime:        container.Runtime,
+				DestIP:         destIPStr,
+				DestPort:       event.DestPort,
+			}
 
 			eventWriter.Write(serializeAlert(&alert))
 			atomic.AddUint64(&stats.eventsWritten, 1)

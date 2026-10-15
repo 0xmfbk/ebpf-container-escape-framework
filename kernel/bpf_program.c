@@ -8,22 +8,6 @@ struct {
     __uint(max_entries, 256 * 1024); // 256 KB
 } events SEC(".maps");
 
-struct {
-    __uint(type, BPF_MAP_TYPE_ARRAY);
-    __uint(max_entries, 1);
-    __type(key, __u32);
-    __type(value, __u32);
-} enforcement_map SEC(".maps");
-
-static __always_inline void enforce_action(void *ctx, struct event_t *e) {
-    __u32 key = 0;
-    __u32 *enforce_mode = bpf_map_lookup_elem(&enforcement_map, &key);
-    
-    if (enforce_mode && *enforce_mode == 1) {
-        bpf_send_signal(9);
-    }
-}
-
 SEC("kprobe/__x64_sys_unshare")
 int BPF_KPROBE(trace_unshare, int flags) {
     struct event_t *e;
@@ -40,7 +24,6 @@ int BPF_KPROBE(trace_unshare, int flags) {
 
     __builtin_memcpy(e->action, "Container_Namespace_Unshare", 30);
 
-    enforce_action(ctx, e);
     bpf_ringbuf_submit(e, 0);
     return 0;
 }
@@ -57,7 +40,6 @@ int BPF_KPROBE(trace_pivot_root) {
     bpf_get_current_comm(&e->comm, sizeof(e->comm));
     __builtin_memcpy(e->action, "Container_Pivot_Root_Escape", 30);
 
-    enforce_action(ctx, e);
     bpf_ringbuf_submit(e, 0);
     return 0;
 }
@@ -101,7 +83,6 @@ int trace_openat(struct trace_event_raw_sys_enter_openat *ctx) {
     __builtin_memcpy(e->action, "Sensitive_File_Access", 30);
     __builtin_memcpy(e->filename, path, sizeof(e->filename));
 
-    enforce_action(ctx, e);
     bpf_ringbuf_submit(e, 0);
     return 0;
 }
@@ -144,7 +125,6 @@ int trace_open(struct trace_event_raw_sys_enter_open *ctx) {
     __builtin_memcpy(e->action, "Sensitive_File_Access", 30);
     __builtin_memcpy(e->filename, path, sizeof(e->filename));
 
-    enforce_action(ctx, e);
     bpf_ringbuf_submit(e, 0);
     return 0;
 }
@@ -180,7 +160,6 @@ int trace_execve(struct trace_event_raw_sys_enter_execve *ctx) {
     __builtin_memcpy(e->action, "Process_Execution", 20);
     __builtin_memcpy(e->filename, path, sizeof(e->filename));
 
-    enforce_action(ctx, e);
     bpf_ringbuf_submit(e, 0);
     return 0;
 }
@@ -232,7 +211,6 @@ int trace_connect(struct trace_event_raw_sys_enter_connect *ctx) {
     __builtin_memcpy(e->dest_ip, &addr.sin_addr, 4);
     e->dest_port = ((addr.sin_port & 0xff) << 8) | (addr.sin_port >> 8);
 
-    enforce_action(ctx, e);
     bpf_ringbuf_submit(e, 0);
     return 0;
 }
@@ -250,7 +228,6 @@ int trace_ptrace(struct trace_event_raw_sys_enter_openat *ctx) {
 
     __builtin_memcpy(e->action, "Process_Injection", 20);
 
-    enforce_action(ctx, e);
     bpf_ringbuf_submit(e, 0);
     return 0;
 }
@@ -278,7 +255,6 @@ int trace_unlinkat(struct trace_event_raw_sys_enter_openat *ctx) {
     __builtin_memcpy(e->action, "Log_Tampering", 20);
     __builtin_memcpy(e->filename, path, sizeof(e->filename));
 
-    enforce_action(ctx, e);
     bpf_ringbuf_submit(e, 0);
     return 0;
 }

@@ -2,25 +2,47 @@ package main
 
 import (
 	"bufio"
+	"container/list"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 )
 
 type ContainerInfo struct {
-	ContainerID string 
-	Runtime     string
+	ContainerID string // 12-char short ID, Docker-CLI style; empty if host or unresolved
+	Runtime     string // "docker", "containerd", "kubepod", "host", "unknown"
+}
+
+const defaultContainerCacheMaxEntries = 5000
+
+func cacheSizeFromEnv() int {
+	if v := os.Getenv("EDR_CONTAINER_CACHE_SIZE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultContainerCacheMaxEntries
+}
+
+type cacheEntry struct {
+	cgroupID uint64
+	info     ContainerInfo
 }
 
 type containerResolver struct {
-	mu    sync.RWMutex
-	cache map[uint64]ContainerInfo
+	mu      sync.Mutex
+	maxSize int
+	ll      *list.List               // front = most recently used
+	items   map[uint64]*list.Element // cgroupID -> element whose Value is *cacheEntry
 }
 
 func newContainerResolver() *containerResolver {
 	return &containerResolver{
-		cache: make(map[uint64]ContainerInfo),
+		maxSize: cacheSizeFromEnv(),
+		ll:      list.New(),
+		items:   make(map[uint64]*list.Element),
 	}
 }
 
@@ -29,18 +51,35 @@ func (cr *containerResolver) resolve(cgroupID uint64, pid uint32) ContainerInfo 
 		return ContainerInfo{Runtime: "unknown"}
 	}
 
-	cr.mu.RLock()
-	info, ok := cr.cache[cgroupID]
-	cr.mu.RUnlock()
-	if ok {
+	cr.mu.Lock()
+	if el, ok := cr.items[cgroupID]; ok {
+		cr.ll.MoveToFront(el)
+		info := el.Value.(*cacheEntry).info
+		cr.mu.Unlock()
 		return info
 	}
+	cr.mu.Unlock()
 
-	info = resolveFromProc(pid)
+	info := resolveFromProc(pid)
 
 	cr.mu.Lock()
-	cr.cache[cgroupID] = info
-	cr.mu.Unlock()
+	defer cr.mu.Unlock()
+
+	if el, ok := cr.items[cgroupID]; ok {
+		cr.ll.MoveToFront(el)
+		return el.Value.(*cacheEntry).info
+	}
+
+	el := cr.ll.PushFront(&cacheEntry{cgroupID: cgroupID, info: info})
+	cr.items[cgroupID] = el
+
+	if cr.ll.Len() > cr.maxSize {
+		oldest := cr.ll.Back()
+		if oldest != nil {
+			cr.ll.Remove(oldest)
+			delete(cr.items, oldest.Value.(*cacheEntry).cgroupID)
+		}
+	}
 
 	return info
 }
@@ -76,11 +115,6 @@ func resolveFromProc(pid uint32) ContainerInfo {
 	return ContainerInfo{Runtime: "host"}
 }
 
-// longestHexRun returns the longest contiguous run of lowercase hex
-// characters in s. Docker/containerd embed a 64-char hex container ID in
-// the cgroup path (e.g. ".../docker-<64hex>.scope"); this is a
-// best-effort extraction that works across the common path shapes without
-// hardcoding every runtime's exact format.
 func longestHexRun(s string) string {
 	best, cur := "", ""
 	isHex := func(b byte) bool {
