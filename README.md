@@ -38,10 +38,10 @@ ebpf-container-escape-framework/
 │   └── bpf_program.o       # Compiled eBPF object
 ├── userspace/
 │   ├── main.go             # Main Go controller, event listener, & resolver
-│   ├── serializer.go       # Zero-allocation high-speed JSON alert serializer
+│   ├── serializer.go       # Zero allocation high speed JSON alert serializer
 │   ├── logger.go           # File rotation & logging handler
-│   └── container_resolver.go # Cgroup-to-container ID mapping
-└── ebpf-edr.service        # Hardened systemd service unit file
+│   └── container_resolver.go # Cgroup to container ID mapping
+└── ebpf edr.service        # Hardened systemd service unit file
 ```
 
 ## 🛠️ Prerequisites
