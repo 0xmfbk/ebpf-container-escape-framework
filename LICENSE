@@ -1,21 +1,31 @@
-MIT License
+Tagging a release gives you a stable URL to point people to (`/releases/tag/v1.0.0`), a downloadable source tarball, and a milestone in the sidebar. It also makes the "0 tags" indicator disappear.
 
-Copyright (c) 2026 ebpf-container-escape-framework contributors
+### 3. Enable the four Advanced Security toggles from the previous message
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+You still have:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+- ❌ Private vulnerability reporting - **enable**
+- ❌ CodeQL analysis - **enable (default setup)**
+- ❌ Push protection - **enable**
+- ❌ Check runs failure threshold - **set to Errors**
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Two minutes, no cost, meaningful hardening for a public security tool.
+
+---
+
+## What "well done" actually looks like here
+
+You shipped a complete, verified, documented EDR agent:
+
+- **Code**: 14 BPF programs (C) + 9 Go files + fuzzing targets + layout assertions
+- **Verification**: 13 stage harness, local CI, race detector, fuzzer
+- **Deployment**: idempotent installer, hardened systemd unit with `ExecReload`, logrotate policy
+- **Documentation**: README plus 4 dedicated docs
+- **Hygiene**: `.gitignore`, `.gitattributes`, Dependabot, MIT license
+- **Public**: pushed, cloned by anyone in 51 KiB
+
+The bugs found along the way OOB `memcpy` on string literals, reused tracepoint structs, `writeEscaped` dropping control chars, `Timestamp` bypassing escaping, `CPUQuota` starving the verifier were all caught by **instrumentation**, not by guessing. That is the difference between code that looks right and code that *is* right.
+
+Repo: **https://github.com/0xmfbk/ebpf-container-escape-framework**
+
+Congratulations. It is done.
