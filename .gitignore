@@ -1,6 +1,44 @@
+# Build artifacts
+kernel/bpf_program.o
+kernel/layout_check
 userspace/ebpf_controller
-emulation/adversary_engine
-downloads/
-*.o
+emulation/adversary
+
+# Backups created by bootstrap/patch scripts
+*.bak
+*.bak.*
+.phase2_0_backup_*/
+.phase2_0_patch_*/
+
+# Verification artifacts
+verify_out/
+
+# Installer staging
+/install-staging/
+
+# Go
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Fuzz crash corpus (seed corpus is committed; crashes are not)
+/testdata/fuzz/*/*
+
+# Editor / OS
 *.swp
 *.swo
+*~
+.DS_Store
+.idea/
+.vscode/
+
+# Generated BTF dump (recreated by 'make kernel' from /sys/kernel/btf/vmlinux)
+kernel/vmlinux.h
+
+# BTF dumps produced by verify
+*.btf
+vmlinux.c
+
+# Emulation build output (already covered by name, explicit for clarity)
+emulation/adversary

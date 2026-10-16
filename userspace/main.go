@@ -1,15 +1,16 @@
 package main
 
 import (
-	"bytes"
-	"encoding/binary"
+	"flag"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
@@ -17,53 +18,93 @@ import (
 )
 
 const (
-	logPath       = "/var/log/ebpf_edr.json"
-	logMaxBytes   = 50 * 1024 * 1024
-	logMaxBackups = 5
-
-	eventChanSize = 4096
-
-	healthLogInterval = 60 * time.Second
+	eventChanSize     = 4096
+	eventSize         = 208
+	eventWords        = eventSize / 8
+	eventVersion      = 3
+	defaultHealthTick = 60 * time.Second
+	ActionMaxID       = 14
 )
 
+/* Action IDs — must match enum event_action in common.h */
+const (
+	ActionUnknown                   = 0
+	ActionContainerNamespaceUnshare = 1
+	ActionContainerPivotRootEscape  = 2
+	ActionSensitiveFileAccess       = 3
+	ActionProcessExecution          = 4
+	ActionNetworkConnection         = 5
+	ActionProcessInjection          = 6
+	ActionLogTampering              = 7
+	ActionEbpfTampering             = 8
+	ActionPerfEventOpen             = 9
+	ActionSuspiciousMount           = 10
+	ActionNamespaceSwitch           = 11
+	ActionChrootEscape              = 12
+	ActionExecutableMemory          = 13
+)
+
+var actionNames = map[uint32]string{
+	ActionContainerNamespaceUnshare: "Container_Namespace_Unshare",
+	ActionContainerPivotRootEscape:  "Container_Pivot_Root_Escape",
+	ActionSensitiveFileAccess:       "Sensitive_File_Access",
+	ActionProcessExecution:          "Process_Execution",
+	ActionNetworkConnection:         "Network_Connection",
+	ActionProcessInjection:          "Process_Injection",
+	ActionLogTampering:              "Log_Tampering",
+	ActionEbpfTampering:             "Ebpf_Tampering",
+	ActionPerfEventOpen:             "Perf_Event_Open",
+	ActionSuspiciousMount:           "Suspicious_Mount",
+	ActionNamespaceSwitch:           "Namespace_Switch",
+	ActionChrootEscape:              "Chroot_Escape",
+	ActionExecutableMemory:          "Executable_Memory",
+}
+
 type event_t struct {
-	CgroupID  uint64
-	Pid       uint32
-	Ppid      uint32
-	Uid       uint32
-	Comm      [16]byte
-	Action    [32]byte
-	Filename  [64]byte
-	Reserved  [4]byte
-	DestIP    [4]byte
-	DestPort  uint16
-	Reserved2 [2]byte
+	CgroupID    uint64
+	StartTimeNs uint64
+	Version     uint32
+	ActionID    uint32
+	Pid         uint32
+	Ppid        uint32
+	Uid         uint32
+	Flags       uint32
+	Comm        [16]byte
+	Filename    [128]byte
+	DestIP      [4]byte
+	DestPort    uint16
+	AuxU16      uint16
+	AuxU64      uint64
+	AuxU32      uint32
 }
 
 type SecurityAlert struct {
-	Timestamp      string `json:"timestamp"`
-	PID            uint32 `json:"pid"`
-	UID            uint32 `json:"uid"`
-	Command        string `json:"command"`
-	Action         string `json:"action"`
-	Target         string `json:"target,omitempty"`
-	Severity       string `json:"severity"`
-	MitreID        string `json:"mitre_id"`
-	MitreTechnique string `json:"mitre_technique"`
-	CgroupID       uint64 `json:"cgroup_id"`
-	ContainerID    string `json:"container_id,omitempty"`
-	Runtime        string `json:"runtime"`
-	DestIP         string `json:"dest_ip,omitempty"`
-	DestPort       uint16 `json:"dest_port,omitempty"`
+	Timestamp        string         `json:"timestamp"`
+	PID              uint32         `json:"pid"`
+	PPID             uint32         `json:"ppid"`
+	UID              uint32         `json:"uid"`
+	StartTimeNs      uint64         `json:"start_time_ns"`
+	Command          string         `json:"command"`
+	Action           string         `json:"action"`
+	Target           string         `json:"target,omitempty"`
+	Severity         string         `json:"severity"`
+	MitreID          string         `json:"mitre_id"`
+	MitreTechnique   string         `json:"mitre_technique"`
+	CgroupID         uint64         `json:"cgroup_id"`
+	ContainerID      string         `json:"container_id,omitempty"`
+	Runtime          string         `json:"runtime"`
+	DestIP           string         `json:"dest_ip,omitempty"`
+	DestPort         uint16         `json:"dest_port,omitempty"`
+	CgroupPath       string         `json:"cgroup_path,omitempty"`
+	LineageSummary   string         `json:"lineage_summary,omitempty"`
+	Lineage          []lineageEntry `json:"lineage,omitempty"`
+	LineageTruncated bool           `json:"lineage_truncated,omitempty"`
+	AuxU16           uint16         `json:"aux_u16,omitempty"`
+	AuxU32           uint32         `json:"aux_u32,omitempty"`
+	AuxU64           uint64         `json:"aux_u64,omitempty"`
 }
 
-var suspiciousPorts = map[uint16]bool{
-	4444:  true,
-	1337:  true,
-	31337: true,
-	6666:  true,
-	6697:  true,
-}
+var suspiciousPorts = map[uint16]bool{4444: true, 1337: true, 31337: true, 6666: true, 6697: true}
 
 func formatIPv4(ip [4]byte) string {
 	return fmt.Sprintf("%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3])
@@ -91,33 +132,100 @@ func calculateSeverity(action, command, target string, destPort uint16) (string,
 			return "MEDIUM", "T1059.004", "Command and Scripting Interpreter: Unix Shell"
 		}
 		return "INFO", "T1059.004", "Command and Scripting Interpreter"
+	case "Ebpf_Tampering":
+		return "HIGH", "T1562.001", "Impair Defenses: eBPF Tampering"
+	case "Perf_Event_Open":
+		return "MEDIUM", "T1562.001", "Impair Defenses: perf_event_open"
+	case "Suspicious_Mount":
+		return "HIGH", "T1611", "Escape to Host: mount"
+	case "Namespace_Switch":
+		return "HIGH", "T1611", "Escape to Host: setns"
+	case "Chroot_Escape":
+		return "HIGH", "T1611", "Escape to Host: chroot"
+	case "Executable_Memory":
+		return "MEDIUM", "T1620", "Reflective Code Loading"
 	default:
 		return "INFO", "T1204", "User Execution"
 	}
 }
 
 type agentStats struct {
-	eventsReceived uint64
-	eventsDropped  uint64
-	eventsWritten  uint64
-	parseErrors    uint64
+	eventsReceived  uint64
+	eventsDropped   uint64
+	eventsWritten   uint64
+	eventsRateLim   uint64
+	parseErrors     uint64
+	versionMismatch uint64
+	ringbufReadErrs uint64
+	reloads         uint64
+	reloadFails     uint64
 }
 
 var stats agentStats
 
-type rawEvent struct {
-	data []byte
-}
+type rawEvent struct{ data [eventWords]uint64 }
+
+var (
+	cfgMu sync.RWMutex
+	cfg   Config
+)
+
+func getConfig() Config  { cfgMu.RLock(); defer cfgMu.RUnlock(); return cfg }
+func setConfig(c Config) { cfgMu.Lock(); cfg = c; cfgMu.Unlock() }
 
 func main() {
-	eventWriter, rotLogger := NewEnterpriseWriter(logPath, logMaxBytes, logMaxBackups)
+	var (
+		flagConfig   = flag.String("config", "/etc/ebpf-edr/config.toml", "path to config.toml")
+		flagLogPath  = flag.String("log-path", "", "override log.path")
+		flagLogLevel = flag.String("log-level", "", "override log.level")
+		flagMode     = flag.String("mode", "", "override mode (audit only)")
+		flagBPFObj   = flag.String("bpf-obj", "../kernel/bpf_program.o", "path to BPF object file")
+		flagHealth   = flag.Duration("health-interval", defaultHealthTick, "health log interval")
+	)
+	flag.Parse()
+
+	// Register signal handlers BEFORE any BPF load so that SIGHUP / SIGTERM
+	// sent during the (slow) verifier pass are captured rather than killing
+	// the process with default disposition. Channels are buffered (cap 1)
+	// so a signal delivered before the consumer goroutine starts is held.
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	reloadChan := make(chan os.Signal, 1)
+	signal.Notify(reloadChan, syscall.SIGHUP)
+
+	cfgPath := *flagConfig
+	if v := os.Getenv("EDR_CONFIG"); v != "" {
+		cfgPath = v
+	}
+
+	loaded, err := LoadConfig(cfgPath)
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
+	loaded.ApplyEnvAndFlags(*flagLogPath, *flagLogLevel, *flagMode)
+	if err := loaded.Validate(); err != nil {
+		log.Fatalf("config invalid: %v", err)
+	}
+	setConfig(loaded)
+
+	log.Printf("[-] config loaded: path=%q mode=%q level=%q log=%q rate=%d/%d",
+		cfgPath, loaded.Mode, loaded.Log.Level, loaded.Log.Path,
+		loaded.Rates.EventsPerSec, loaded.Rates.Burst)
+
+	loaded.Filter.CommAllowlist = appendUnique(loaded.Filter.CommAllowlist, "ebpf_controller")
+	loaded.Filter.CommAllowlist = appendUnique(loaded.Filter.CommAllowlist, "ebpf-edr")
+	setConfig(loaded)
+
+	eventWriter, rotLogger := NewEnterpriseWriter(loaded.Log.Path, loaded.Log.MaxBytes, loaded.Log.MaxBackups)
 	defer rotLogger.Close()
 
 	resolver := newContainerResolver()
+	lineageC := newLineageCache(loaded.Context.LineageCacheSize)
+	cgroupC := newCgroupPathCache(loaded.Context.CgroupCacheSize)
 
-	spec, err := ebpf.LoadCollectionSpec("../kernel/bpf_program.o")
+	spec, err := ebpf.LoadCollectionSpec(*flagBPFObj)
 	if err != nil {
-		log.Fatalf("Failed to load eBPF spec: %v", err)
+		log.Fatalf("load spec: %v", err)
 	}
 
 	var objs struct {
@@ -129,10 +237,19 @@ func main() {
 		ProgConnect   *ebpf.Program `ebpf:"trace_connect"`
 		ProgPtrace    *ebpf.Program `ebpf:"trace_ptrace"`
 		ProgUnlinkat  *ebpf.Program `ebpf:"trace_unlinkat"`
+		ProgBPF       *ebpf.Program `ebpf:"trace_bpf"`
+		ProgPerf      *ebpf.Program `ebpf:"trace_perf_event_open"`
+		ProgMount     *ebpf.Program `ebpf:"trace_mount"`
+		ProgSetns     *ebpf.Program `ebpf:"trace_setns"`
+		ProgChroot    *ebpf.Program `ebpf:"trace_chroot"`
+		ProgMprotect  *ebpf.Program `ebpf:"trace_mprotect"`
 		Events        *ebpf.Map     `ebpf:"events"`
+		CommAllow     *ebpf.Map     `ebpf:"comm_allowlist"`
+		CgAllow       *ebpf.Map     `ebpf:"cgroup_allowlist"`
+		ActionEnabled *ebpf.Map     `ebpf:"action_enabled"`
 	}
 	if err := spec.LoadAndAssign(&objs, nil); err != nil {
-		log.Fatalf("Failed to load and assign eBPF objects: %v", err)
+		log.Fatalf("load objects: %v", err)
 	}
 	defer objs.ProgUnshare.Close()
 	defer objs.ProgPivotRoot.Close()
@@ -142,90 +259,169 @@ func main() {
 	defer objs.ProgConnect.Close()
 	defer objs.ProgPtrace.Close()
 	defer objs.ProgUnlinkat.Close()
+	defer objs.ProgBPF.Close()
+	defer objs.ProgPerf.Close()
+	defer objs.ProgMount.Close()
+	defer objs.ProgSetns.Close()
+	defer objs.ProgChroot.Close()
+	defer objs.ProgMprotect.Close()
 	defer objs.Events.Close()
+	defer objs.CommAllow.Close()
+	defer objs.CgAllow.Close()
+	defer objs.ActionEnabled.Close()
 
-	kpUnshare, err := link.Kprobe("__x64_sys_unshare", objs.ProgUnshare, nil)
-	if err != nil {
-		log.Fatalf("Failed to attach unshare kprobe: %v", err)
+	if err := populateFilterMaps(objs.CommAllow, objs.CgAllow, loaded); err != nil {
+		log.Fatalf("populate filter maps: %v", err)
 	}
+	if err := populateActionEnabled(objs.ActionEnabled, loaded); err != nil {
+		log.Fatalf("populate action_enabled: %v", err)
+	}
+	log.Printf("[-] filter maps: comm=%d cgroup=%d disabled_actions=%d",
+		len(loaded.Filter.CommAllowlist), len(loaded.Filter.CgroupAllowlist),
+		len(loaded.DisabledActions))
+
+	attach := func(name string, fn func() error) {
+		if err := fn(); err != nil {
+			log.Fatalf("attach %s: %v", name, err)
+		}
+	}
+	var (
+		kpUnshare, kpPivot                 link.Link
+		tpOpenat, tpOpen, tpExecve, tpConn link.Link
+		tpPtrace, tpUnlinkat               link.Link
+		tpBPF, tpPerf, tpMount, tpSetns    link.Link
+		tpChroot, tpMprotect               link.Link
+	)
+	attach("unshare", func() (e error) { kpUnshare, e = link.Kprobe("__x64_sys_unshare", objs.ProgUnshare, nil); return })
+	attach("pivot_root", func() (e error) { kpPivot, e = link.Kprobe("__x64_sys_pivot_root", objs.ProgPivotRoot, nil); return })
+	attach("openat", func() (e error) {
+		tpOpenat, e = link.Tracepoint("syscalls", "sys_enter_openat", objs.ProgOpenat, nil)
+		return
+	})
+	attach("open", func() (e error) {
+		tpOpen, e = link.Tracepoint("syscalls", "sys_enter_open", objs.ProgOpen, nil)
+		return
+	})
+	attach("execve", func() (e error) {
+		tpExecve, e = link.Tracepoint("syscalls", "sys_enter_execve", objs.ProgExecve, nil)
+		return
+	})
+	attach("connect", func() (e error) {
+		tpConn, e = link.Tracepoint("syscalls", "sys_enter_connect", objs.ProgConnect, nil)
+		return
+	})
+	attach("ptrace", func() (e error) {
+		tpPtrace, e = link.Tracepoint("syscalls", "sys_enter_ptrace", objs.ProgPtrace, nil)
+		return
+	})
+	attach("unlinkat", func() (e error) {
+		tpUnlinkat, e = link.Tracepoint("syscalls", "sys_enter_unlinkat", objs.ProgUnlinkat, nil)
+		return
+	})
+	attach("bpf", func() (e error) { tpBPF, e = link.Tracepoint("syscalls", "sys_enter_bpf", objs.ProgBPF, nil); return })
+	attach("perf_event_open", func() (e error) {
+		tpPerf, e = link.Tracepoint("syscalls", "sys_enter_perf_event_open", objs.ProgPerf, nil)
+		return
+	})
+	attach("mount", func() (e error) {
+		tpMount, e = link.Tracepoint("syscalls", "sys_enter_mount", objs.ProgMount, nil)
+		return
+	})
+	attach("setns", func() (e error) {
+		tpSetns, e = link.Tracepoint("syscalls", "sys_enter_setns", objs.ProgSetns, nil)
+		return
+	})
+	attach("chroot", func() (e error) {
+		tpChroot, e = link.Tracepoint("syscalls", "sys_enter_chroot", objs.ProgChroot, nil)
+		return
+	})
+	attach("mprotect", func() (e error) {
+		tpMprotect, e = link.Tracepoint("syscalls", "sys_enter_mprotect", objs.ProgMprotect, nil)
+		return
+	})
 	defer kpUnshare.Close()
-
-	kpPivot, err := link.Kprobe("__x64_sys_pivot_root", objs.ProgPivotRoot, nil)
-	if err != nil {
-		log.Fatalf("Failed to attach pivot_root kprobe: %v", err)
-	}
 	defer kpPivot.Close()
-
-	tpOpenat, err := link.Tracepoint("syscalls", "sys_enter_openat", objs.ProgOpenat, nil)
-	if err != nil {
-		log.Fatalf("Failed to attach openat tracepoint: %v", err)
-	}
 	defer tpOpenat.Close()
-
-	tpOpen, err := link.Tracepoint("syscalls", "sys_enter_open", objs.ProgOpen, nil)
-	if err != nil {
-		log.Fatalf("Failed to attach open tracepoint: %v", err)
-	}
 	defer tpOpen.Close()
-
-	tpExecve, err := link.Tracepoint("syscalls", "sys_enter_execve", objs.ProgExecve, nil)
-	if err != nil {
-		log.Fatalf("Failed to attach execve tracepoint: %v", err)
-	}
 	defer tpExecve.Close()
-
-	tpConnect, err := link.Tracepoint("syscalls", "sys_enter_connect", objs.ProgConnect, nil)
-	if err != nil {
-		log.Fatalf("Failed to attach connect tracepoint: %v", err)
-	}
-	defer tpConnect.Close()
-
-	tpPtrace, err := link.Tracepoint("syscalls", "sys_enter_ptrace", objs.ProgPtrace, nil)
-	if err != nil {
-		log.Fatalf("Failed to attach ptrace tracepoint: %v", err)
-	}
+	defer tpConn.Close()
 	defer tpPtrace.Close()
-
-	tpUnlinkat, err := link.Tracepoint("syscalls", "sys_enter_unlinkat", objs.ProgUnlinkat, nil)
-	if err != nil {
-		log.Fatalf("Failed to attach unlinkat tracepoint: %v", err)
-	}
 	defer tpUnlinkat.Close()
+	defer tpBPF.Close()
+	defer tpPerf.Close()
+	defer tpMount.Close()
+	defer tpSetns.Close()
+	defer tpChroot.Close()
+	defer tpMprotect.Close()
 
-	log.Printf("[-] EDR Engine active. Streaming structured JSON security events to stdout + %s", logPath)
+	log.Printf("[-] EDR Engine active (event version %d, mode=%s). Streaming to stdout + %s",
+		eventVersion, loaded.Mode, loaded.Log.Path)
 
 	rd, err := ringbuf.NewReader(objs.Events)
 	if err != nil {
-		log.Fatalf("Failed to open ringbuf reader: %v", err)
+		log.Fatalf("open ringbuf: %v", err)
 	}
 	defer rd.Close()
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() { <-sigChan; rd.Close() }()
+
+	rl := newRateLimiter(loaded.Rates.EventsPerSec, loaded.Rates.Burst)
+
+	go func() {
+		for range reloadChan {
+			newCfg, err := LoadConfig(cfgPath)
+			if err != nil {
+				atomic.AddUint64(&stats.reloadFails, 1)
+				log.Printf("[reload] parse failed: %v (keeping current)", err)
+				continue
+			}
+			newCfg.ApplyEnvAndFlags(*flagLogPath, *flagLogLevel, *flagMode)
+			if err := newCfg.Validate(); err != nil {
+				atomic.AddUint64(&stats.reloadFails, 1)
+				log.Printf("[reload] invalid: %v (keeping current)", err)
+				continue
+			}
+			newCfg.Filter.CommAllowlist = appendUnique(newCfg.Filter.CommAllowlist, "ebpf_controller")
+			newCfg.Filter.CommAllowlist = appendUnique(newCfg.Filter.CommAllowlist, "ebpf-edr")
+			if err := populateFilterMaps(objs.CommAllow, objs.CgAllow, newCfg); err != nil {
+				atomic.AddUint64(&stats.reloadFails, 1)
+				log.Printf("[reload] filter map update failed: %v", err)
+				continue
+			}
+			if err := populateActionEnabled(objs.ActionEnabled, newCfg); err != nil {
+				atomic.AddUint64(&stats.reloadFails, 1)
+				log.Printf("[reload] action_enabled update failed: %v", err)
+				continue
+			}
+			rl.setRates(newCfg.Rates.EventsPerSec, newCfg.Rates.Burst)
+			setConfig(newCfg)
+			atomic.AddUint64(&stats.reloads, 1)
+			log.Printf("[reload] applied: level=%q rate=%d/%d disabled=%d",
+				newCfg.Log.Level, newCfg.Rates.EventsPerSec, newCfg.Rates.Burst,
+				len(newCfg.DisabledActions))
+		}
+	}()
 
 	eventChan := make(chan rawEvent, eventChanSize)
 	done := make(chan struct{})
-
-	go func() {
-		<-sigChan
-		rd.Close()
-	}()
 
 	go func() {
 		defer close(eventChan)
 		for {
 			record, err := rd.Read()
 			if err != nil {
-				log.Printf("Reading ringbuf finished or error: %v", err)
+				atomic.AddUint64(&stats.ringbufReadErrs, 1)
 				return
 			}
-			atomic.AddUint64(&stats.eventsReceived, 1)
-
-			buf := make([]byte, len(record.RawSample))
-			copy(buf, record.RawSample)
-
+			if len(record.RawSample) != eventSize {
+				atomic.AddUint64(&stats.parseErrors, 1)
+				continue
+			}
+			var re rawEvent
+			copy((*[eventSize]byte)(unsafe.Pointer(&re.data[0]))[:], record.RawSample)
 			select {
-			case eventChan <- rawEvent{data: buf}:
+			case eventChan <- re:
+				atomic.AddUint64(&stats.eventsReceived, 1)
 			default:
 				atomic.AddUint64(&stats.eventsDropped, 1)
 			}
@@ -234,70 +430,190 @@ func main() {
 
 	go func() {
 		defer close(done)
-		var event event_t
 		for re := range eventChan {
-			if err := binary.Read(bytes.NewReader(re.data), binary.LittleEndian, &event); err != nil {
+			ev := (*event_t)(unsafe.Pointer(&re.data[0]))
+			if ev.Version != eventVersion {
+				atomic.AddUint64(&stats.versionMismatch, 1)
+				continue
+			}
+			action, ok := actionNames[ev.ActionID]
+			if !ok {
 				atomic.AddUint64(&stats.parseErrors, 1)
 				continue
 			}
+			if !rl.allow(ev.ActionID) {
+				atomic.AddUint64(&stats.eventsRateLim, 1)
+				continue
+			}
 
-			comm := string(bytes.TrimRight(event.Comm[:], "\x00"))
-			action := string(bytes.TrimRight(event.Action[:], "\x00"))
-			filename := string(bytes.TrimRight(event.Filename[:], "\x00"))
+			comm := cstr(ev.Comm[:])
+			filename := cstr(ev.Filename[:])
+			severity, mitreID, mitreTechnique := calculateSeverity(action, comm, filename, ev.DestPort)
+			container := resolver.resolve(ev.CgroupID, ev.Pid)
 
-			severity, mitreID, mitreTechnique := calculateSeverity(action, comm, filename, event.DestPort)
-			container := resolver.resolve(event.CgroupID, event.Pid)
+			var lineageBuf [16]lineageEntry
+			lineage, lineageComplete := lineageC.buildLineage(
+				lineageBuf[:0], ev.Pid, ev.Ppid, ev.StartTimeNs, comm,
+				loaded.Context.LineageMaxDepth)
+			lineageTruncated := !lineageComplete
+			lineageSummary := buildLineageSummary(lineage)
 
-			var target string
-			var destIPStr string
+			var cgroupPath string
+			if ev.CgroupID != 0 {
+				if p, ok := cgroupC.get(ev.CgroupID); ok {
+					cgroupPath = p
+				} else if p, ok := readCgroupPath(ev.Pid); ok {
+					cgroupC.put(ev.CgroupID, p)
+					cgroupPath = p
+				}
+			}
 
+			var target, destIPStr string
 			switch action {
-			case "Sensitive_File_Access", "Process_Execution", "Log_Tampering":
+			case "Sensitive_File_Access", "Process_Execution", "Log_Tampering",
+				"Suspicious_Mount", "Chroot_Escape":
 				target = filename
 			case "Network_Connection":
-				destIPStr = formatIPv4(event.DestIP)
-				target = fmt.Sprintf("%s:%d", destIPStr, event.DestPort)
-			default:
-				target = ""
+				destIPStr = formatIPv4(ev.DestIP)
+				target = fmt.Sprintf("%s:%d", destIPStr, ev.DestPort)
 			}
 
 			alert := SecurityAlert{
-				Timestamp:      time.Now().UTC().Format(time.RFC3339),
-				PID:            event.Pid,
-				UID:            event.Uid,
-				Command:        comm,
-				Action:         action,
-				Target:         target,
-				Severity:       severity,
-				MitreID:        mitreID,
-				MitreTechnique: mitreTechnique,
-				CgroupID:       event.CgroupID,
-				ContainerID:    container.ContainerID,
-				Runtime:        container.Runtime,
-				DestIP:         destIPStr,
-				DestPort:       event.DestPort,
+				Timestamp:        time.Now().UTC().Format(time.RFC3339),
+				PID:              ev.Pid,
+				PPID:             ev.Ppid,
+				UID:              ev.Uid,
+				StartTimeNs:      ev.StartTimeNs,
+				Command:          comm,
+				Action:           action,
+				Target:           target,
+				Severity:         severity,
+				MitreID:          mitreID,
+				MitreTechnique:   mitreTechnique,
+				CgroupID:         ev.CgroupID,
+				ContainerID:      container.ContainerID,
+				Runtime:          container.Runtime,
+				CgroupPath:       cgroupPath,
+				LineageSummary:   lineageSummary,
+				Lineage:          lineage,
+				LineageTruncated: lineageTruncated,
+				DestIP:           destIPStr,
+				DestPort:         ev.DestPort,
+				AuxU16:           ev.AuxU16,
+				AuxU32:           ev.AuxU32,
+				AuxU64:           ev.AuxU64,
 			}
 
-			eventWriter.Write(serializeAlert(&alert))
+			writeAlert(eventWriter, &alert)
 			atomic.AddUint64(&stats.eventsWritten, 1)
 		}
 	}()
 
-	healthTicker := time.NewTicker(healthLogInterval)
+	healthTicker := time.NewTicker(*flagHealth)
 	defer healthTicker.Stop()
 
 	for {
 		select {
 		case <-healthTicker.C:
-			log.Printf("[health] received=%d written=%d dropped=%d parse_errors=%d chan_len=%d/%d",
+			lcHits, lcMisses := lineageC.stats()
+			log.Printf("[health] recv=%d written=%d dropped=%d rate_limited=%d parse_err=%d ver_mismatch=%d ringbuf_err=%d reloads=%d reload_fail=%d chan=%d/%d lineage_cache=%d/%d lineage_hits=%d lineage_misses=%d cgroup_cache=%d/%d",
 				atomic.LoadUint64(&stats.eventsReceived),
 				atomic.LoadUint64(&stats.eventsWritten),
 				atomic.LoadUint64(&stats.eventsDropped),
+				atomic.LoadUint64(&stats.eventsRateLim),
 				atomic.LoadUint64(&stats.parseErrors),
-				len(eventChan), eventChanSize)
+				atomic.LoadUint64(&stats.versionMismatch),
+				atomic.LoadUint64(&stats.ringbufReadErrs),
+				atomic.LoadUint64(&stats.reloads),
+				atomic.LoadUint64(&stats.reloadFails),
+				len(eventChan), eventChanSize,
+				lineageC.size(), lineageC.capacity(),
+				lcHits, lcMisses,
+				cgroupC.size(), cgroupC.capacity())
 		case <-done:
 			log.Println("[-] Worker finished, shutting down.")
 			return
 		}
 	}
+}
+
+func populateActionEnabled(m *ebpf.Map, c Config) error {
+	disabled := map[string]bool{}
+	for _, name := range c.DisabledActions {
+		disabled[name] = true
+	}
+	for id := uint32(0); id < 32; id++ {
+		var enabled uint32
+		if id >= 1 && id < ActionMaxID {
+			if name, ok := actionNames[id]; ok && !disabled[name] {
+				enabled = 1
+			}
+		}
+		if err := m.Put(id, enabled); err != nil {
+			return fmt.Errorf("put action_enabled[%d]: %w", id, err)
+		}
+	}
+	return nil
+}
+
+func populateFilterMaps(commMap, cgMap *ebpf.Map, c Config) error {
+	if err := clearMap(commMap); err != nil {
+		return fmt.Errorf("clear comm: %w", err)
+	}
+	if err := clearMap(cgMap); err != nil {
+		return fmt.Errorf("clear cgroup: %w", err)
+	}
+	var one uint32 = 1
+	for _, name := range c.Filter.CommAllowlist {
+		var key [16]byte
+		copy(key[:], name)
+		if err := commMap.Put(key, one); err != nil {
+			return fmt.Errorf("put comm %q: %w", name, err)
+		}
+	}
+	for _, cg := range c.Filter.CgroupAllowlist {
+		k := cg
+		if err := cgMap.Put(k, one); err != nil {
+			return fmt.Errorf("put cgroup %d: %w", cg, err)
+		}
+	}
+	return nil
+}
+
+func clearMap(m *ebpf.Map) error {
+	iter := m.Iterate()
+	var key, value []byte
+	var toDelete [][]byte
+	for iter.Next(&key, &value) {
+		kc := make([]byte, len(key))
+		copy(kc, key)
+		toDelete = append(toDelete, kc)
+	}
+	if err := iter.Err(); err != nil {
+		return err
+	}
+	for _, k := range toDelete {
+		if err := m.Delete(k); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func appendUnique(xs []string, v string) []string {
+	for _, x := range xs {
+		if x == v {
+			return xs
+		}
+	}
+	return append(xs, v)
+}
+
+func cstr(b []byte) string {
+	for i, c := range b {
+		if c == 0 {
+			return string(b[:i])
+		}
+	}
+	return string(b)
 }

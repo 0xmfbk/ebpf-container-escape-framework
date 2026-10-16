@@ -1,0 +1,32 @@
+# ebpf-container-escape-framework — Phase 2.4 (audit-only, v3 events)
+mode = "audit"
+
+[log]
+path        = "/var/log/ebpf_edr.json"
+max_bytes   = 52428800
+max_backups = 5
+level       = "info"
+
+[filter]
+comm_allowlist = []
+cgroup_allowlist = []
+
+[rates]
+events_per_sec = 200
+burst          = 400
+
+[container]
+cache_max_entries = 5000
+
+[context]
+lineage_max_depth  = 16
+lineage_cache_size = 20000
+cgroup_cache_size  = 5000
+
+# Actions suppressed at the kernel level (never reserve ringbuf space).
+# Perf and mprotect are extremely chatty on production systems; keep disabled
+# unless actively hunting for perf-based eBPF attachment or W^X bypasses.
+disabled_actions = [
+    "Perf_Event_Open",
+    "Executable_Memory",
+]

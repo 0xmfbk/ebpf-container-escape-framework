@@ -1,0 +1,42 @@
+[Unit]
+Description=eBPF EDR Agent
+Documentation=file:///usr/share/doc/ebpf-edr/
+After=network.target
+ConditionPathExists=/sys/kernel/btf/vmlinux
+ConditionPathExists=@PREFIX@/lib/ebpf-edr/bpf_program.o
+
+[Service]
+Type=simple
+ExecStart=@PREFIX@/sbin/ebpf-edr --config /etc/ebpf-edr/config.toml --bpf-obj @PREFIX@/lib/ebpf-edr/bpf_program.o
+
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+LimitMEMLOCK=infinity
+LimitNOFILE=65536
+
+AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+ReadWritePaths=/var/log /sys/fs/bpf
+RuntimeDirectory=ebpf-edr
+StateDirectory=ebpf-edr
+RuntimeDirectoryMode=0750
+StateDirectoryMode=0750
+
+MemoryMax=256M
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target

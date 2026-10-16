@@ -1,0 +1,4 @@
+* text=auto eol=lf
+*.o    binary
+*.btf  binary
+*.json linguist-language=JSON
