@@ -22,8 +22,8 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y clang llvm libbpf-dev libelf-dev make gcc libcap-dev libbfd-dev pkg-config
-        # Compile bpftool from source to bypass Ubuntu's broken kernel-wrapper packages
-        git clone --depth 1 https://github.com/libbpf/bpftool.git /tmp/bpftool
+        # Compile bpftool from source with submodules to bypass Ubuntu 24.04 broken packages
+        git clone --depth 1 --recursive https://github.com/libbpf/bpftool.git /tmp/bpftool
         cd /tmp/bpftool/src && make -j$(nproc)
         sudo cp bpftool /usr/local/bin/
         bpftool version
