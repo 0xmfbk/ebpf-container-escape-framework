@@ -4,13 +4,13 @@
   <img src="docs/demo.gif" alt="Demo" width="800">
 </p>
 
-An audit-only Linux EDR agent built with eBPF (kernel side, C) and a
-high-efficiency Go daemon (user space). Targets Debian 13 / kernel 6.12+
+An audit only Linux EDR agent built with eBPF (kernel side, C) and a
+high efficiency Go daemon (user space). Targets Debian 13 / kernel 6.12+
 with BTF enabled. Emits structured JSON with full process lineage and
-cgroup context, backed by a zero-allocation pipeline and bounded caches.
+cgroup context, backed by a zero allocation pipeline and bounded caches.
 
 **Status:** Phase 2.6 complete. 13 MITRE ATT&CK techniques covered.
-Verified end-to-end on kernel 6.12.111.
+Verified end to end on kernel 6.12.111.
 
 ## Coverage
 
@@ -30,14 +30,14 @@ Verified end-to-end on kernel 6.12.111.
 | 12 | Chroot_Escape | HIGH | T1611 | tracepoint/sys_enter_chroot |
 | 13 | Executable_Memory | MEDIUM | T1620 | tracepoint/sys_enter_mprotect |
 
-Actions 9 and 13 are attached but kernel-side-suppressed by default via
+Actions 9 and 13 are attached but kernel side suppressed by default via
 `disabled_actions` in `config.toml`.
 
 ## Architecture
 
 Kernel hooks (14) feed a comm/cgroup filter, then an `action_enabled`
-lookup, then a 1 MiB ringbuf carrying 208-byte records. Userspace reads
-into a fixed pooled buffer, applies a per-action token bucket, enriches
+lookup, then a 1 MiB ringbuf carrying 208 byte records. Userspace reads
+into a fixed pooled buffer, applies a per action token bucket, enriches
 with process lineage and cgroup path from bounded LRU caches, and routes
 through an Encoder + Sink to any destination.
 
@@ -45,7 +45,7 @@ Full details: `docs/ARCHITECTURE.md`.
 
 ## SIEM Integration
 
-`ebpf-edr` exports alerts to any SIEM via a format + transport layer.
+`ebpf edr` exports alerts to any SIEM via a format + transport layer.
 
 ```toml
 [output]
@@ -64,7 +64,7 @@ Supported formats: native JSON, ECS 8.11, OCSF 1.3.0, CEF, LEEF 2.0.
 Recipes for Splunk, Elastic, Sentinel, QRadar, and generic syslog:
 `docs/SIEM_INTEGRATION.md`.
 
-Absent `[output]`, behavior is byte-identical to v1.x.
+Absent `[output]`, behavior is byte identical to v1.x.
 
 ## Requirements
 
@@ -131,7 +131,7 @@ TOML at `/etc/ebpf-edr/config.toml`. Precedence: CLI > env (`EDR_*`) > file > de
     disabled_actions = []
 
 Reload: `sudo systemctl reload ebpf-edr`. `mode = "enforce"` is rejected;
-this build is audit-only.
+this build is audit only.
 
 ## Event schema (v3, 208 bytes on the wire)
 
@@ -157,7 +157,7 @@ this build is audit-only.
       ]
     }
 
-Fields `aux_u16`, `aux_u32`, `aux_u64` carry action-specific context.
+Fields `aux_u16`, `aux_u32`, `aux_u64` carry action specific context.
 
 ## Operations
 
@@ -182,8 +182,8 @@ Targets: `dropped` = 0, `ver_mismatch` = 0, `lineage_cache` under capacity.
 | `make test` | Go unit tests |
 | `make test-race` | Go tests with race detector |
 | `make fuzz` | 60s fuzz per target |
-| `make verify` | 15-stage core + 2-stage SIEM verification |
-| `make verify-siem` | 2-stage SIEM verification only |
+| `make verify` | 15 stage core + 2 stage SIEM verification |
+| `make verify-siem` | 2 stage SIEM verification only |
 | `make ci` | Local CI: gofmt, vet, race, fuzz, verify |
 | `make install` / `uninstall` | System install / removal |
 | `make test-attacks` | Emulation coverage assertions |
@@ -201,14 +201,14 @@ Targets: `dropped` = 0, `ver_mismatch` = 0, `lineage_cache` under capacity.
 
 Last full run (kernel 6.12.111+deb13-amd64): **79 PASS, 1 WARN, 0 FAIL**
 across 15+2 stages. The one WARN is the synthetic perf workload's CPU
-reading; idle CPU is verified separately at 0.40%.
+reading, idle CPU is verified separately at 0.40%.
 
 ## License
 
 MIT
 ## Kubernetes & Docker (Phase 2.7)
 
-The framework is designed to run as a Kubernetes DaemonSet to provide cluster-wide EDR coverage.
+The framework is designed to run as a Kubernetes DaemonSet to provide cluster wide EDR coverage.
 
 ### Build the Docker Image
 
