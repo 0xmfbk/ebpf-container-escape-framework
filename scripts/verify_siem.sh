@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 2.6 SIEM verification — format matrix + webhook transport.
+# Phase 2.6 SIEM verification - format matrix + webhook transport.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -1,5 +1,10 @@
 # eBPF Container Escape & Runtime Threat Detection Framework
 
+[![CI](https://github.com/0xmfbk/ebpf-container-escape-framework/actions/workflows/ci.yml/badge.svg)](https://github.com/0xmfbk/ebpf-container-escape-framework/actions/workflows/ci.yml)
+[![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
+![Demo](docs/demo.gif)
+
 An audit-only Linux EDR agent built with eBPF (kernel side, C) and a
 high-efficiency Go daemon (user space). Targets Debian 13 / kernel 6.12+
 with BTF enabled. Emits structured JSON with full process lineage and
@@ -187,11 +192,11 @@ Targets: `dropped` = 0, `ver_mismatch` = 0, `lineage_cache` under capacity.
 
 ## Documentation
 
-- `docs/ARCHITECTURE.md` — data flow, kernel programs, caches, versioning
-- `docs/OPERATIONS.md` — install, config, reload, troubleshooting
-- `docs/MITRE_MATRIX.md` — full technique mapping with hook names
-- `docs/SECURITY.md` — threat model, capabilities, sandbox, failure modes
-- `docs/SIEM_INTEGRATION.md` — Splunk, Elastic, Sentinel, QRadar recipes
+- `docs/ARCHITECTURE.md` - data flow, kernel programs, caches, versioning
+- `docs/OPERATIONS.md` - install, config, reload, troubleshooting
+- `docs/MITRE_MATRIX.md` - full technique mapping with hook names
+- `docs/SECURITY.md` - threat model, capabilities, sandbox, failure modes
+- `docs/SIEM_INTEGRATION.md` - Splunk, Elastic, Sentinel, QRadar recipes
 
 ## Verification evidence
 

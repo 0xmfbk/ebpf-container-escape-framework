@@ -33,9 +33,9 @@ enum event_action {
 
 /*
  * Wire format v3. 208 bytes, natural alignment. New fields at the end:
- *   aux_u16  — small auxiliary (bpf cmd, mprotect prot, setns nstype)
- *   aux_u64  — larger auxiliary (mmap address, mount flags)
- *   aux_u32  — mid-size auxiliary (bpf prog_type, perf pid)
+ *   aux_u16  - small auxiliary (bpf cmd, mprotect prot, setns nstype)
+ *   aux_u64  - larger auxiliary (mmap address, mount flags)
+ *   aux_u32  - mid-size auxiliary (bpf prog_type, perf pid)
  */
 struct event_t {
     __u64 cgroup_id;                  /*   0 */

@@ -1,4 +1,4 @@
-# ebpf-container-escape-framework — Default Configuration
+# ebpf-container-escape-framework - Default Configuration
 mode = "audit"
 
 # Top-level array: Must be before any [sections]

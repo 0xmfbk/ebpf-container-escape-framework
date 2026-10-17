@@ -4,7 +4,7 @@ GO         ?= go
 BPFTOOL    ?= bpftool
 CC         ?= gcc
 
-# Disable VCS stamping — required when building as root in a repo owned by
+# Disable VCS stamping - required when building as root in a repo owned by
 # another user. Exported so every recursive make and every `go` invocation
 # inherits it.
 export GOFLAGS := -buildvcs=false

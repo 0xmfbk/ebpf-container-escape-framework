@@ -27,7 +27,7 @@ const (
 	ActionMaxID       = 14
 )
 
-/* Action IDs — must match enum event_action in common.h */
+/* Action IDs - must match enum event_action in common.h */
 const (
 	ActionUnknown                   = 0
 	ActionContainerNamespaceUnshare = 1

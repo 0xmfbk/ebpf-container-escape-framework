@@ -100,7 +100,7 @@ func DefaultConfig() Config {
 	}
 }
 
-// LoadConfig reads TOML from path. Missing file is not an error — defaults are returned.
+// LoadConfig reads TOML from path. Missing file is not an error - defaults are returned.
 func LoadConfig(path string) (Config, error) {
 	cfg := DefaultConfig()
 	if path == "" {

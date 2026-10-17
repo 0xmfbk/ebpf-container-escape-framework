@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ebpf-container-escape-framework — install / uninstall
+# ebpf-container-escape-framework - install / uninstall
 # Usage: sudo ./install.sh [--prefix PATH] [--dry-run] [--uninstall]
 #                        [--keep-config | --overwrite-config]
 set -uo pipefail

@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.25'
+        cache-dependency-path: userspace/go.sum
+
+    - name: Install BPF dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang llvm libbpf-dev libelf-dev make gcc
+
+    - name: Build BPF object
+      run: make kernel
+
+    - name: Build Go daemon
+      run: make userspace
+
+    - name: Check formatting
+      run: |
+        if [ -n "$(gofmt -l userspace emulation)" ]; then
+          echo "Code is not formatted"
+          exit 1
+        fi
+
+    - name: Run go vet
+      run: cd userspace && go vet ./...
+
+    - name: Run race detector
+      run: cd userspace && go test -race -count=1 ./...
+
+    - name: Run fuzz smoke tests (10s)
+      run: |
+        cd userspace
+        go test -run='^$' -fuzz=FuzzDecodeEvent -fuzztime=10s .
+        go test -run='^$' -fuzz=FuzzSerializeAlert -fuzztime=10s .
+        go test -run='^$' -fuzz=FuzzConfigParse -fuzztime=10s .

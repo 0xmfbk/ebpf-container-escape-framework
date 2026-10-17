@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 2.0 + 2.2 verification harness — ebpf-container-escape-framework
+# Phase 2.0 + 2.2 verification harness - ebpf-container-escape-framework
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -149,7 +149,7 @@ stage_build() {
     if make emulation >"${OUT}/build_emulation.log" 2>&1; then
         pass "make emulation"
     else
-        warn "make emulation failed — emulation stage will be skipped"
+        warn "make emulation failed - emulation stage will be skipped"
         tail -20 "${OUT}/build_emulation.log" | sed 's/^/    /'
     fi
 }
@@ -196,7 +196,7 @@ stage_load() {
         return
     fi
     if ! have bpftool; then
-        warn "bpftool not installed — verifier check deferred to runtime stage"
+        warn "bpftool not installed - verifier check deferred to runtime stage"
         return
     fi
 
@@ -207,7 +207,7 @@ stage_load() {
         pass "bpftool prog loadall succeeded (all programs pass verifier)"
         ls "$pin" | sed 's/^/    pinned: /'
     else
-        warn "bpftool loadall did not succeed — falling back to per-program load"
+        warn "bpftool loadall did not succeed - falling back to per-program load"
         local ok=0 bad=0
         for sec in trace_unshare trace_pivot_root trace_openat trace_open \
                    trace_execve trace_connect trace_ptrace trace_unlinkat; do
@@ -246,7 +246,7 @@ stage_runtime() {
     sleep "$DAEMON_GRACE"
 
     if ! kill -0 "$dpid" 2>/dev/null; then
-        fail "daemon exited early — see ${RUN_LOG}"
+        fail "daemon exited early - see ${RUN_LOG}"
         tail -30 "$RUN_LOG" | sed 's/^/    /'
         return
     fi
@@ -328,7 +328,7 @@ stage_emulation() {
     local dpid=$!
     sleep "$DAEMON_GRACE"
     if ! kill -0 "$dpid" 2>/dev/null; then
-        fail "daemon died before emulation — see ${RUN_LOG}"
+        fail "daemon died before emulation - see ${RUN_LOG}"
         return
     fi
     pass "daemon up for emulation"
@@ -375,7 +375,7 @@ stage_perf() {
     local dpid=$!
     sleep "$DAEMON_GRACE"
     if ! kill -0 "$dpid" 2>/dev/null; then
-        fail "daemon died — see ${RUN_LOG}"
+        fail "daemon died - see ${RUN_LOG}"
         return
     fi
 
@@ -395,7 +395,7 @@ stage_perf() {
     if awk -v c="${cpu:-0}" 'BEGIN{exit !(c < 1.0)}'; then
         pass "CPU < 1% (got ${cpu}%)"
     else
-        warn "CPU >= 1% (got ${cpu}%) — may be noisy"
+        warn "CPU >= 1% (got ${cpu}%) - may be noisy"
     fi
 
     if (( rss_mb < 50 )); then
@@ -701,7 +701,7 @@ NH_CFG_END
 }
 
 require_root
-head2 "ebpf-container-escape-framework — Phase 2.0 verification"
+head2 "ebpf-container-escape-framework - Phase 2.0 verification"
 info "root: $ROOT"
 info "out:  $OUT"
 info "stage: $STAGE"
