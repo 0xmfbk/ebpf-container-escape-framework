@@ -27,7 +27,7 @@ Requires restart: log.path, log.max_bytes, context.*, container.cache_max_entrie
 
 | Command | Purpose |
 |---------|---------|
-| `sudo -E make verify` | Runs 15-stage core verifier + 2-stage SIEM verifier |
+| `sudo -E make verify` | Runs 15 stage core verifier + 2 stage SIEM verifier |
 | `make verify-siem` | Runs only the SIEM format matrix and webhook tests |
 | `make ci` | Runs gofmt, vet, race, fuzz, and all verifiers |
 

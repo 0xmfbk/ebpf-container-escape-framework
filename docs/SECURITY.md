@@ -3,7 +3,7 @@
 ## Threat Model
 
 - Host kernel is trusted.
-- EDR binary and config are root-owned and immutable in production.
+- EDR binary and config are root owned and immutable in production.
 - Attackers may run as unprivileged users or compromised containers.
 - Attackers cannot modify running EDR process memory or its BPF programs.
 
@@ -29,7 +29,7 @@ ProtectControlGroups.
 
 ## Audit-Only Mode
 
-This build is audit-only. --mode=enforce is rejected at startup. No BPF
+This build is audit only. --mode=enforce is rejected at startup. No BPF
 program returns -EPERM; no syscall is blocked. The system is a detection
 plane, not a prevention plane.
 
@@ -48,4 +48,4 @@ plane, not a prevention plane.
 
 - Enforcement (blocking syscalls)
 - Binary attestation
-- Protection against kernel-level compromise
+- Protection against kernel level compromise

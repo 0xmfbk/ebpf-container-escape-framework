@@ -3,9 +3,9 @@
 ## Data Flow
 
 Kernel tracepoints and kprobes (14 hooks) feed a single filter stage
-(is_filtered + action_enabled lookup), then reserve a 208-byte record on
-a 1 MiB ringbuf. Userspace reads the ringbuf into fixed-size pooled
-records, applies a per-action token bucket, enriches with process lineage
+(is_filtered + action_enabled lookup), then reserve a 208 byte record on
+a 1 MiB ringbuf. Userspace reads the ringbuf into fixed size pooled
+records, applies a per action token bucket, enriches with process lineage
 and cgroup path from bounded LRU caches, and dispatches to a Sink.
 
 The Sink encodes the event (JSON, ECS, OCSF, CEF, or LEEF) and routes it
@@ -18,18 +18,18 @@ to the configured transport (file, stdout, syslog, or webhook).
 | events | ringbuf (1 MiB) | kernel to userspace transport |
 | comm_allowlist | hash (256) | drop events by process name |
 | cgroup_allowlist | hash (1024) | drop events by cgroup ID |
-| action_enabled | array (32) | per-action kernel-side enable/disable |
+| action_enabled | array (32) | per action kernel side enable/disable |
 
 ## Userspace Components
 
 | Package | Responsibility |
 |---------|----------------|
 | config.go | TOML schema, validation, precedence |
-| ratelimit.go | per-action token bucket |
+| ratelimit.go | per action token bucket |
 | lineage.go | process ancestry cache (LRU 20000) |
 | cgroup_path.go | cgroup path cache (LRU 5000) |
 | container_resolver.go | cgroup ID to container ID + runtime |
-| serializer.go | zero-alloc JSON serializer |
+| serializer.go | zero alloc JSON serializer |
 | format_*.go | ECS, OCSF, CEF, LEEF encoders |
 | output.go | Sink interface, network queue, circuit breaker |
 | output_*.go | syslog and webhook transports |
@@ -42,7 +42,7 @@ to the configured transport (file, stdout, syslog, or webhook).
 | container | 5000 | LRU | above 90 percent |
 | lineage | 20000 | LRU | above 95 percent |
 | cgroup path | 5000 | LRU | above 95 percent |
-| network sink queue | 10000 | drop-oldest | N/A |
+| network sink queue | 10000 | drop oldest | N/A |
 
 ## Event Versioning
 
