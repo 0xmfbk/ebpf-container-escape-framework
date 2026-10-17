@@ -24,12 +24,15 @@ jobs:
     - name: Install BPF dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y clang llvm libbpf-dev libelf-dev make gcc libcap-dev libbfd-dev pkg-config
+        sudo apt-get install -y clang llvm libbpf-dev libelf-dev make gcc libcap-dev libbfd-dev pkg-config shellcheck
         # Compile bpftool from source with submodules to bypass Ubuntu 24.04 broken packages
         git clone --depth 1 --recursive https://github.com/libbpf/bpftool.git /tmp/bpftool
         cd /tmp/bpftool/src && make -j$(nproc)
         sudo cp bpftool /usr/local/bin/
         bpftool version
+
+    - name: Run shellcheck
+      run: shellcheck scripts/*.sh tests/attacks/scenarios/*/run.sh
 
     - name: Build BPF object
       run: make kernel

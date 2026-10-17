@@ -1,0 +1,35 @@
+# Hardened values for Enterprise Kubernetes deployment
+image:
+  repository: 0xmfbk/ebpf-container-escape-framework
+  tag: v2.8.0
+  pullPolicy: IfNotPresent
+
+# Strict Security Context
+podSecurityContext:
+  runAsUser: 0 # Required to read /proc of host processes
+  runAsGroup: 0
+  fsGroup: 0
+
+containerSecurityContext:
+  privileged: false
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+    add: ["BPF", "PERFMON", "SYS_ADMIN", "SYS_RESOURCE"]
+  seccompProfile:
+    type: RuntimeDefault
+
+resources:
+  limits:
+    memory: "128Mi"
+    cpu: "200m"
+  requests:
+    memory: "32Mi"
+    cpu: "10m"
+
+config:
+  mode: audit
+  output:
+    format: ecs
+    target: stdout
