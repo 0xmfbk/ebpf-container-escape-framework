@@ -59,6 +59,26 @@ High idle CPU: check journalctl -u ebpf-edr and look for the health line.
 If recv is high while the system is idle, a chatty action is firing. Add
 it to disabled_actions in config.toml, then systemctl reload ebpf-edr.
 
+## High-Density Kubernetes Tuning
+
+In large Kubernetes clusters, the control plane components (like `kubelet` and `containerd`) generate a massive amount of benign process execution events. To prevent log spam and reduce SIEM costs, you should drop these at the kernel level using `comm_allowlist`.
+
+Add this to your `config.toml`:
+
+```toml
+[filter]
+comm_allowlist = [
+    "kubelet",
+    "kube-proxy",
+    "containerd",
+    "containerd-shim",
+    "runc",
+    "coredns"
+]
+```
+
+Because this filter is evaluated in the eBPF kernel program before the ringbuf reservation, it reduces CPU and memory usage to almost zero for these specific processes.
+
 ## Configuration reference
 
 mode = "audit" is the only supported value in this build.
@@ -84,6 +104,8 @@ cache_max_entries = 5000
 lineage_max_depth  = 16
 lineage_cache_size = 20000
 cgroup_cache_size  = 5000
+
+disabled_actions = []
 
 [output]
 format = "json"      # json | ecs | ocsf | cef | leef

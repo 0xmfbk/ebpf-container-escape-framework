@@ -700,6 +700,34 @@ NH_CFG_END
     kill -TERM $p 2>/dev/null; sleep 1; kill -KILL $p 2>/dev/null
 }
 
+stage_docker() {
+    head2 "STAGE 16/16  Docker Container Build"
+    if ! command -v docker &> /dev/null; then
+        warn "Docker not installed, skipping container build test."
+        return
+    fi
+    
+    info "Building Docker image (this may take a minute)..."
+    if docker build -t ebpf-edr:test . > /dev/null 2>&1; then
+        pass "Docker image built successfully"
+        info "Testing container startup..."
+        timeout 3s docker run --rm --privileged --pid=host \
+            -v /sys/kernel/btf/vmlinux:/sys/kernel/btf/vmlinux:ro \
+            -v /sys/fs/bpf:/sys/fs/bpf \
+            -v /sys/kernel/tracing:/sys/kernel/tracing:ro \
+            ebpf-edr:test > /tmp/docker_test.log 2>&1 || true
+            
+        if grep -q "EDR Engine active" /tmp/docker_test.log; then
+            pass "Docker container started and attached successfully"
+        else
+            fail "Docker container failed to start"
+            tail -5 /tmp/docker_test.log | sed 's/^/    /'
+        fi
+    else
+        fail "Docker image failed to build"
+    fi
+}
+
 require_root
 head2 "ebpf-container-escape-framework - Phase 2.0 verification"
 info "root: $ROOT"
@@ -719,6 +747,8 @@ run_stage idle      && stage_idle
 run_stage lineage   && stage_lineage
 run_stage cache     && stage_cache
 run_stage new_hooks && stage_new_hooks
+run_stage docker    && stage_docker
+
 
 head2 "SUMMARY"
 echo "  ${G}PASS${N}: $PASS"
