@@ -22,8 +22,11 @@ jobs:
       run: |
         sudo apt-get update
                 sudo apt-get install -y clang llvm libbpf-dev libelf-dev make gcc
-        # Install bpftool for the current runner kernel to generate vmlinux.h
-        sudo apt-get install -y linux-tools-$(uname -r) || sudo apt-get install -y linux-tools-generic
+        # Download static bpftool to bypass Ubuntu's kernel-specific wrapper scripts
+        wget -qO /tmp/bpftool https://github.com/libbpf/bpftool/releases/download/v7.4.0/bpftool-x86_64-v7.4.0
+        sudo mv /tmp/bpftool /usr/local/bin/bpftool
+        sudo chmod +x /usr/local/bin/bpftool
+        bpftool version
 
     - name: Build BPF object
       run: make kernel
