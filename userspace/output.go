@@ -61,6 +61,10 @@ func (s *fileSink) Submit(a *SecurityAlert) {
 		return
 	}
 	// Preserve line-delimited output.
+	maxInt := int(^uint(0) >> 1)
+	if len(payload) >= maxInt {
+		return
+	}
 	line := make([]byte, 0, len(payload)+1)
 	line = append(line, payload...)
 	line = append(line, '\n')
