@@ -21,11 +21,7 @@ jobs:
     - name: Install BPF dependencies
       run: |
         sudo apt-get update
-                sudo apt-get install -y clang llvm libbpf-dev libelf-dev make gcc
-        # Download static bpftool to bypass Ubuntu's kernel-specific wrapper scripts
-        wget -qO /tmp/bpftool https://github.com/libbpf/bpftool/releases/download/v7.4.0/bpftool-x86_64-v7.4.0
-        sudo mv /tmp/bpftool /usr/local/bin/bpftool
-        sudo chmod +x /usr/local/bin/bpftool
+                sudo apt-get install -y clang llvm libbpf-dev libelf-dev make gcc bpftool
         bpftool version
 
     - name: Build BPF object
