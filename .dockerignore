@@ -1,0 +1,10 @@
+verify_out/
+.git/
+*.bak
+*.bak.*
+.phase2_0_backup_*/
+.phase2_0_patch_*/
+userspace/ebpf_controller
+emulation/adversary
+kernel/bpf_program.o
+kernel/layout_check

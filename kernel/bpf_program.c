@@ -4,6 +4,16 @@
 #include <bpf/bpf_core_read.h>
 #include "../common/common.h"
 
+#define MATCH_STR(p, s) ({ \
+    int _match = 1; \
+    _Pragma("unroll") \
+    for (int _i = 0; _i < sizeof(s) - 1; _i++) { \
+        if (p[_i] != s[_i]) { _match = 0; break; } \
+    } \
+    _match; \
+})
+
+
 /* ================== Maps ================== */
 
 struct {
@@ -99,12 +109,12 @@ static __always_inline void event_fill_common(struct event_t *e)
 
 static __always_inline int is_shadow_path(const char *p)
 {
-    return __builtin_memcmp(p, "/etc/shadow", 12) == 0;
+    return MATCH_STR(p, "/etc/shadow");
 }
 
 static __always_inline int is_docker_sock_path(const char *p)
 {
-    return __builtin_memcmp(p, "/var/run/docker.sock", 21) == 0;
+    return MATCH_STR(p, "/var/run/docker.sock");
 }
 
 /* ================== Container escape ================== */
@@ -304,7 +314,7 @@ int trace_unlinkat(struct trace_event_raw_sys_enter_unlinkat *ctx)
     char path[MAX_FILENAME_LEN] = {};
     if (bpf_probe_read_user_str(path, sizeof(path), ctx->pathname) < 0)
         return 0;
-    if (__builtin_memcmp(path, "/var/log/ebpf_edr", 17) != 0)
+    if (!MATCH_STR(path, "/var/log/ebpf_edr"))
         return 0;
 
     struct event_t *e = event_alloc(ACTION_LOG_TAMPERING);

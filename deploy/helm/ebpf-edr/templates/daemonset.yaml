@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "ebpf-edr.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "ebpf-edr.name" . }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ include "ebpf-edr.name" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "ebpf-edr.name" . }}
+    spec:
+      hostPID: true
+      containers:
+        - name: edr
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: config
+              mountPath: /etc/ebpf-edr
+            - name: btf
+              mountPath: /sys/kernel/btf/vmlinux
+              readOnly: true
+            - name: bpf-fs
+              mountPath: /sys/fs/bpf
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: tracefs
+              mountPath: /sys/kernel/tracing
+              readOnly: true
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "ebpf-edr.fullname" . }}
+        - name: btf
+          hostPath:
+            path: /sys/kernel/btf/vmlinux
+            type: File
+        - name: bpf-fs
+          hostPath:
+            path: /sys/fs/bpf
+            type: DirectoryOrCreate
+        - name: proc
+          hostPath:
+            path: /proc
+            type: Directory
+        - name: tracefs
+          hostPath:
+            path: /sys/kernel/tracing
+            type: Directory
+      tolerations:
+        - operator: Exists

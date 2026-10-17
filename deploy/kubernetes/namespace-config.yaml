@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ebpf-edr
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ebpf-edr-config
+  namespace: ebpf-edr
+data:
+  config.toml: |
+    mode = "audit"
+    [log]
+    level = "info"
+    [output]
+    format = "json"
+    target = "stdout"  # Standard for K8s (use stdout -> log collector)

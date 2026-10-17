@@ -1,0 +1,27 @@
+image:
+  repository: 0xmfbk/ebpf-container-escape-framework
+  tag: v2.7.0
+  pullPolicy: IfNotPresent
+
+resources:
+  limits:
+    memory: "256Mi"
+    cpu: "500m"
+  requests:
+    memory: "64Mi"
+    cpu: "50m"
+
+config:
+  mode: audit
+  output:
+    format: json
+    target: stdout
+  # If you want to send to a webhook (e.g., Splunk), uncomment and set these:
+  # target: webhook
+  # webhook_url: "https://splunk.internal:8088/services/collector/event"
+  # webhook_token: "Splunk ${SPLUNK_HEC_TOKEN}"
+
+# Create a secret if webhook token is used
+secret:
+  create: false
+  splunkToken: ""

@@ -127,3 +127,17 @@ verify-all:
 .PHONY: verify-siem
 verify-siem:
 	@bash $(SCRIPTS_DIR)/verify_siem.sh
+
+# ---- Phase 2.7: Cloud-Native ----
+.PHONY: docker-build k8s-apply k8s-delete
+
+docker-build:
+	docker build -t 0xmfbk/ebpf-container-escape-framework:v2.7.0 .
+
+k8s-apply:
+	kubectl apply -f deploy/kubernetes/namespace-config.yaml
+	kubectl apply -f deploy/kubernetes/daemonset.yaml
+
+k8s-delete:
+	kubectl delete -f deploy/kubernetes/daemonset.yaml
+	kubectl delete -f deploy/kubernetes/namespace-config.yaml

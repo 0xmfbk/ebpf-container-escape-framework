@@ -202,3 +202,34 @@ reading; idle CPU is verified separately at 0.40%.
 ## License
 
 MIT
+## Kubernetes & Docker (Phase 2.7)
+
+The framework is designed to run as a Kubernetes DaemonSet to provide cluster-wide EDR coverage.
+
+### Build the Docker Image
+
+    make docker-build
+
+### Deploy to Kubernetes (Raw Manifests)
+
+    make k8s-apply
+
+This creates the `ebpf-edr` namespace, a ConfigMap for configuration, and a DaemonSet that runs on every node. Logs are sent to `stdout` by default, where they can be scraped by Fluent Bit, Vector, or Promtail.
+
+### Deploy via Helm (Recommended)
+
+    helm install ebpf-edr ./deploy/helm/ebpf-edr -n ebpf-edr --create-namespace
+
+To send alerts to a SIEM webhook via Helm:
+
+    helm install ebpf-edr ./deploy/helm/ebpf-edr -n ebpf-edr --create-namespace \
+      --set config.output.target=webhook \
+      --set config.output.webhook_url="https://splunk.internal:8088/services/collector/event" \
+      --set config.output.webhook_token="Splunk ${SPLUNK_HEC_TOKEN}"
+
+### Security Architecture
+
+- **`hostPID: true`**: Required to map PIDs to cgroups for lineage.
+- **`privileged: true`**: Required for `CAP_BPF`, `CAP_PERFMON`, `CAP_SYS_ADMIN`.
+- **Host Mounts**: Mounts `/sys/kernel/btf/vmlinux` and `/sys/fs/bpf` from the host.
+- **Resource Limits**: Default limits (256Mi memory, 500m CPU) ensure the DaemonSet cannot starve the node.
