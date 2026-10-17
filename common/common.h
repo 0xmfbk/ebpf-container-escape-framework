@@ -8,7 +8,6 @@
 #define MAX_FILENAME_LEN 128
 #define MAX_DEST_IP_LEN  4
 
-/* Stable action IDs. Append only; never reorder. */
 enum event_action {
     ACTION_UNKNOWN                     = 0,
     ACTION_CONTAINER_NAMESPACE_UNSHARE = 1,

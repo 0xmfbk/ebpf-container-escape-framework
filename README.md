@@ -175,3 +175,27 @@ reading; idle CPU is verified separately at 0.70%.
 ## License
 
 MIT
+
+## SIEM Integration
+
+`ebpf-edr` exports alerts to any SIEM via a format + transport layer.
+
+```toml
+[output]
+format = "ecs"        # json | ecs | ocsf | cef | leef
+target = "webhook"    # file | stdout | syslog | webhook
+
+[output.webhook]
+url         = "https://splunk.internal:8088/services/collector/event"
+auth_header = "Splunk ${SPLUNK_HEC_TOKEN}"
+splunk_hec  = true
+```
+
+Supported transports: file, stdout, syslog (UDP/TCP/TLS), HTTPS webhook.
+Supported formats: native JSON, ECS 8.11, OCSF 1.3.0, CEF, LEEF 2.0.
+
+Recipes for Splunk, Elastic, Sentinel, QRadar, and generic syslog:
+`docs/SIEM_INTEGRATION.md`.
+
+Absent `[output]`, behavior is byte-identical to v1.x.
+

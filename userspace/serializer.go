@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"strconv"
 	"sync"
 )
@@ -12,11 +11,9 @@ var bufPool = sync.Pool{
 	New: func() any { return new(bytes.Buffer) },
 }
 
-func writeAlert(w io.Writer, a *SecurityAlert) {
-	buf := bufPool.Get().(*bytes.Buffer)
-	buf.Reset()
-	defer bufPool.Put(buf)
-
+// writeAlertJSON emits the JSON object WITHOUT trailing newline.
+// File sinks add the delimiter themselves.
+func writeAlertJSON(buf *bytes.Buffer, a *SecurityAlert) {
 	buf.WriteString(`{"timestamp":"`)
 	writeEscaped(buf, a.Timestamp)
 	buf.WriteString(`","pid":`)
@@ -108,9 +105,7 @@ func writeAlert(w io.Writer, a *SecurityAlert) {
 		buf.WriteString(`","dest_port":`)
 		buf.WriteString(strconv.FormatUint(uint64(a.DestPort), 10))
 	}
-	buf.WriteString("}\n")
-
-	_, _ = w.Write(buf.Bytes())
+	buf.WriteString("}")
 }
 
 func writeEscaped(buf *bytes.Buffer, s string) {

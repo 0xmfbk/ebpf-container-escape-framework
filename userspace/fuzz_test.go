@@ -70,12 +70,14 @@ func FuzzSerializeAlert(f *testing.F) {
 			Runtime:        "host",
 			DestPort:       port,
 		}
-		var buf bytes.Buffer
-		writeAlert(&buf, a)
+		payload, err := jsonEncoder{}.Encode(a)
+		if err != nil {
+			t.Fatalf("json encode error: %v", err)
+		}
 
 		var out map[string]any
-		if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
-			t.Fatalf("invalid JSON: %v\nraw: %q", err, buf.String())
+		if err := json.Unmarshal(payload, &out); err != nil {
+			t.Fatalf("invalid JSON: %v\nraw: %q", err, string(payload))
 		}
 	})
 }
@@ -103,6 +105,71 @@ func FuzzConfigParse(f *testing.F) {
 		cfg, err := LoadConfig(name)
 		if err == nil {
 			_ = cfg.Validate()
+		}
+	})
+}
+
+func FuzzECSEncode(f *testing.F) {
+	f.Add("2026-01-01T00:00:00Z", "cat", "/etc/shadow", uint16(0), "HIGH", "T1003.008")
+	f.Add("", "", "", uint16(0), "", "")
+	f.Add("\x00\x01", "\xff", "\x7f", uint16(65535), "CRITICAL", "T1611")
+
+	f.Fuzz(func(t *testing.T, ts, cmd, target string, port uint16, sev, mitre string) {
+		a := &SecurityAlert{
+			Timestamp: ts, Command: cmd, Target: target, DestPort: port,
+			Severity: sev, MitreID: mitre, Action: "Sensitive_File_Access",
+		}
+		out, err := ecsEncoder{}.Encode(a)
+		if err != nil {
+			t.Fatalf("ecs encode error: %v", err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(out, &doc); err != nil {
+			t.Fatalf("ecs invalid JSON: %v\nraw: %q", err, string(out))
+		}
+	})
+}
+
+func FuzzOCSFEncode(f *testing.F) {
+	f.Add("2026-01-01T00:00:00Z", "cat", "/etc/shadow", uint16(0), "HIGH", "T1003.008")
+	f.Add("", "", "", uint16(0), "", "")
+	f.Add("invalid-time", "\x01", "\x02", uint16(1), "CRITICAL", "T1611")
+
+	f.Fuzz(func(t *testing.T, ts, cmd, target string, port uint16, sev, mitre string) {
+		a := &SecurityAlert{
+			Timestamp: ts, Command: cmd, Target: target, DestPort: port,
+			Severity: sev, MitreID: mitre, Action: "Sensitive_File_Access",
+		}
+		out, err := ocsfEncoder{}.Encode(a)
+		if err != nil {
+			t.Fatalf("ocsf encode error: %v", err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(out, &doc); err != nil {
+			t.Fatalf("ocsf invalid JSON: %v\nraw: %q", err, string(out))
+		}
+	})
+}
+
+func FuzzCEFEncode(f *testing.F) {
+	f.Add("2026-01-01T00:00:00Z", "cat", "/etc/shadow", uint16(0), "HIGH", "T1003.008")
+	f.Add("", "", "", uint16(0), "", "")
+	f.Add("a|b", "c=d", "e\\f", uint16(1), "CRITICAL", "x\ny")
+
+	f.Fuzz(func(t *testing.T, ts, cmd, target string, port uint16, sev, mitre string) {
+		a := &SecurityAlert{
+			Timestamp: ts, Command: cmd, Target: target, DestPort: port,
+			Severity: sev, MitreID: mitre, Action: "Sensitive_File_Access",
+		}
+		out, err := cefEncoder{}.Encode(a)
+		if err != nil {
+			t.Fatalf("cef encode error: %v", err)
+		}
+		if len(out) == 0 {
+			t.Fatal("cef produced empty output")
+		}
+		if string(out[:6]) != "CEF:0|" {
+			t.Fatalf("cef missing prefix: %q", string(out))
 		}
 	})
 }

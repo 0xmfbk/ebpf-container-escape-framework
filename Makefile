@@ -63,6 +63,7 @@ test:
 
 verify: configs
 	@bash $(SCRIPTS_DIR)/verify_phase2_0.sh
+	@bash $(SCRIPTS_DIR)/verify_siem.sh
 
 clean:
 	rm -f $(BPF_OBJ) $(LAYOUT_BIN) $(USER_BIN) $(EMUL_BIN)
@@ -116,3 +117,13 @@ clean-backups:
 	find . -type f -name '*.bak.*' -delete 2>/dev/null || true
 	find . -type d -name '.phase2_0_backup_*' -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name '.phase2_0_patch_*'  -exec rm -rf {} + 2>/dev/null || true
+
+.PHONY: verify-all
+verify-all:
+	@bash $(SCRIPTS_DIR)/verify_phase2_0.sh
+	@bash $(SCRIPTS_DIR)/verify_siem.sh
+	@bash $(SCRIPTS_DIR)/verify_siem.sh
+
+.PHONY: verify-siem
+verify-siem:
+	@bash $(SCRIPTS_DIR)/verify_siem.sh

@@ -30,3 +30,32 @@ disabled_actions = [
     "Perf_Event_Open",
     "Executable_Memory",
 ]
+
+# ============================================================
+# Output (Phase 2.6)
+# ============================================================
+# format : json | ecs | ocsf | cef | leef
+# target : file | stdout | syslog | webhook
+# If [output] is absent or omitted, behavior is byte-identical to v1.x.
+[output]
+format = "json"
+target = "file"
+path   = "/var/log/ebpf_edr.json"
+
+# Syslog transport (target = "syslog")
+[output.syslog]
+network = "udp"                 # udp | tcp | tls
+address = "siem.internal:514"
+tag     = "ebpf-edr"
+tls_ca  = ""
+
+# Webhook transport (target = "webhook")
+[output.webhook]
+url                  = ""       # e.g. https://splunk.internal:8088/services/collector/event
+auth_header          = ""       # e.g. Splunk ${SPLUNK_HEC_TOKEN}   (env vars expanded)
+batch_style          = "ndjson" # json | ndjson
+splunk_hec           = false    # wraps payload for Splunk HEC
+insecure_skip_verify = false
+batch_size           = 100
+flush_interval       = "2s"
+timeout              = "5s"

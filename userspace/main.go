@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -216,12 +217,67 @@ func main() {
 	loaded.Filter.CommAllowlist = appendUnique(loaded.Filter.CommAllowlist, "ebpf-edr")
 	setConfig(loaded)
 
-	eventWriter, rotLogger := NewEnterpriseWriter(loaded.Log.Path, loaded.Log.MaxBytes, loaded.Log.MaxBackups)
-	defer rotLogger.Close()
+	var (
+		rotLogger io.Closer
+	)
+	defer func() {
+		if rotLogger != nil {
+			rotLogger.Close()
+		}
+	}()
 
 	resolver := newContainerResolver()
 	lineageC := newLineageCache(loaded.Context.LineageCacheSize)
 	cgroupC := newCgroupPathCache(loaded.Context.CgroupCacheSize)
+
+	// ---- Output sink (Phase 2.6) ----
+	enc, err := newEncoder(loaded.Output.Format)
+	if err != nil {
+		log.Fatalf("output encoder: %v", err)
+	}
+
+	var sink Sink
+	switch loaded.Output.Target {
+	case "", "file":
+		logPath := loaded.Output.Path
+		if logPath == "" {
+			logPath = loaded.Log.Path
+		}
+		ew, rl := NewEnterpriseWriter(logPath, loaded.Log.MaxBytes, loaded.Log.MaxBackups)
+		rotLogger = rl
+		sink = newFileSink(enc, ew)
+	case "stdout":
+		sink = newFileSink(enc, os.Stdout)
+	case "syslog":
+		scfg := loaded.Output.Syslog
+		tr, err := newSyslogTransport(scfg.Network, scfg.Address, scfg.Tag, scfg.TLSCA)
+		if err != nil {
+			log.Fatalf("syslog transport: %v", err)
+		}
+		nsCfg := defaultNetworkSinkConfig()
+		sink = newNetworkSink(enc, tr, nsCfg)
+	case "webhook":
+		wcfg := loaded.Output.Webhook
+		timeout := parseDurationOr(wcfg.Timeout, 5*time.Second)
+		tr, err := newWebhookTransport(wcfg.URL, wcfg.AuthHeader, enc.ContentType(),
+			wcfg.BatchStyle, wcfg.SplunkHEC, wcfg.InsecureSkipVerify, timeout)
+		if err != nil {
+			log.Fatalf("webhook transport: %v", err)
+		}
+		nsCfg := defaultNetworkSinkConfig()
+		if wcfg.BatchSize > 0 {
+			nsCfg.BatchSize = wcfg.BatchSize
+		}
+		if wcfg.FlushInterval != "" {
+			nsCfg.FlushInterval = parseDurationOr(wcfg.FlushInterval, nsCfg.FlushInterval)
+		}
+		sink = newNetworkSink(enc, tr, nsCfg)
+	default:
+		log.Fatalf("unknown output target %q", loaded.Output.Target)
+	}
+	defer sink.Close()
+
+	log.Printf("[-] output sink: %s", sink.Describe())
 
 	spec, err := ebpf.LoadCollectionSpec(*flagBPFObj)
 	if err != nil {
@@ -504,7 +560,7 @@ func main() {
 				AuxU64:           ev.AuxU64,
 			}
 
-			writeAlert(eventWriter, &alert)
+			sink.Submit(&alert)
 			atomic.AddUint64(&stats.eventsWritten, 1)
 		}
 	}()
@@ -516,7 +572,8 @@ func main() {
 		select {
 		case <-healthTicker.C:
 			lcHits, lcMisses := lineageC.stats()
-			log.Printf("[health] recv=%d written=%d dropped=%d rate_limited=%d parse_err=%d ver_mismatch=%d ringbuf_err=%d reloads=%d reload_fail=%d chan=%d/%d lineage_cache=%d/%d lineage_hits=%d lineage_misses=%d cgroup_cache=%d/%d",
+			st := sink.Stats()
+			log.Printf("[health] recv=%d written=%d dropped=%d rate_limited=%d parse_err=%d ver_mismatch=%d ringbuf_err=%d reloads=%d reload_fail=%d chan=%d/%d lineage_cache=%d/%d lineage_hits=%d lineage_misses=%d cgroup_cache=%d/%d sink_sent=%d sink_failed=%d sink_dropped=%d sink_retries=%d sink_queue=%d sink_circuit=%v",
 				atomic.LoadUint64(&stats.eventsReceived),
 				atomic.LoadUint64(&stats.eventsWritten),
 				atomic.LoadUint64(&stats.eventsDropped),
@@ -529,9 +586,11 @@ func main() {
 				len(eventChan), eventChanSize,
 				lineageC.size(), lineageC.capacity(),
 				lcHits, lcMisses,
-				cgroupC.size(), cgroupC.capacity())
+				cgroupC.size(), cgroupC.capacity(),
+				st.Sent, st.Failed, st.Dropped, st.Retries, st.QueueDepth, st.CircuitOpen)
 		case <-done:
 			log.Println("[-] Worker finished, shutting down.")
+			_ = sink.Flush(3 * time.Second)
 			return
 		}
 	}
@@ -616,4 +675,15 @@ func cstr(b []byte) string {
 		}
 	}
 	return string(b)
+}
+
+func parseDurationOr(s string, def time.Duration) time.Duration {
+	if s == "" {
+		return def
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return def
+	}
+	return d
 }

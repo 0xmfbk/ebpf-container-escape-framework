@@ -17,6 +17,7 @@ type Config struct {
 	Container       ContainerConfig `toml:"container"`
 	Context         ContextConfig   `toml:"context"`
 	DisabledActions []string        `toml:"disabled_actions"`
+	Output          OutputConfig    `toml:"output"`
 }
 
 type LogConfig struct {
@@ -40,6 +41,32 @@ type ContainerConfig struct {
 	CacheMaxEntries int `toml:"cache_max_entries"`
 }
 
+type OutputConfig struct {
+	Format  string        `toml:"format"`
+	Target  string        `toml:"target"`
+	Path    string        `toml:"path"`
+	Syslog  SyslogConfig  `toml:"syslog"`
+	Webhook WebhookConfig `toml:"webhook"`
+}
+
+type SyslogConfig struct {
+	Network string `toml:"network"`
+	Address string `toml:"address"`
+	Tag     string `toml:"tag"`
+	TLSCA   string `toml:"tls_ca"`
+}
+
+type WebhookConfig struct {
+	URL                string `toml:"url"`
+	AuthHeader         string `toml:"auth_header"`
+	BatchStyle         string `toml:"batch_style"`
+	SplunkHEC          bool   `toml:"splunk_hec"`
+	InsecureSkipVerify bool   `toml:"insecure_skip_verify"`
+	BatchSize          int    `toml:"batch_size"`
+	FlushInterval      string `toml:"flush_interval"`
+	Timeout            string `toml:"timeout"`
+}
+
 type ContextConfig struct {
 	LineageMaxDepth  int `toml:"lineage_max_depth"`
 	LineageCacheSize int `toml:"lineage_cache_size"`
@@ -58,6 +85,18 @@ func DefaultConfig() Config {
 		Rates:     RatesConfig{EventsPerSec: 200, Burst: 400},
 		Container: ContainerConfig{CacheMaxEntries: 5000},
 		Context:   ContextConfig{LineageMaxDepth: 16, LineageCacheSize: 20000, CgroupCacheSize: 5000},
+		Output: OutputConfig{
+			Format: "json",
+			Target: "file",
+			Path:   "/var/log/ebpf_edr.json",
+			Webhook: WebhookConfig{
+				BatchStyle:    "ndjson",
+				BatchSize:     100,
+				FlushInterval: "2s",
+				Timeout:       "5s",
+			},
+			Syslog: SyslogConfig{Network: "udp", Tag: "ebpf-edr"},
+		},
 	}
 }
 
@@ -130,6 +169,31 @@ func (c *Config) Validate() error {
 	if c.Context.CgroupCacheSize < 1 {
 		return errors.New("context.cgroup_cache_size must be >= 1")
 	}
+
+	// output validation
+	switch c.Output.Format {
+	case "", "json", "ecs", "ocsf", "cef", "leef":
+	default:
+		return errors.New("output.format must be json|ecs|ocsf|cef|leef")
+	}
+	switch c.Output.Target {
+	case "", "file", "stdout", "syslog", "webhook":
+	default:
+		return errors.New("output.target must be file|stdout|syslog|webhook")
+	}
+	if c.Output.Target == "webhook" && c.Output.Webhook.URL == "" {
+		return errors.New("output.webhook.url is required when target=webhook")
+	}
+	if c.Output.Target == "syslog" && c.Output.Syslog.Address == "" {
+		return errors.New("output.syslog.address is required when target=syslog")
+	}
+	if c.Output.Webhook.BatchStyle != "" && c.Output.Webhook.BatchStyle != "json" && c.Output.Webhook.BatchStyle != "ndjson" {
+		return errors.New("output.webhook.batch_style must be json or ndjson")
+	}
+	if c.Output.Webhook.BatchSize < 1 {
+		c.Output.Webhook.BatchSize = 100
+	}
+
 	for _, cg := range c.Filter.CgroupAllowlist {
 		if cg == 0 {
 			return errors.New("filter.cgroup_allowlist must not contain 0")
