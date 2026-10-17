@@ -1,6 +1,6 @@
 apiVersion: v2
 name: ebpf-edr
-description: Audit-only eBPF EDR for Linux
+description: Audit only eBPF EDR for Linux
 type: application
 version: 2.7.0
 appVersion: "2.7.0"

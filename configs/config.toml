@@ -1,7 +1,7 @@
 # ebpf-container-escape-framework - Default Configuration
 mode = "audit"
 
-# Top-level array: Must be before any [sections]
+# Top level array: Must be before any [sections]
 disabled_actions = [
     "Perf_Event_Open",
     "Executable_Memory",
