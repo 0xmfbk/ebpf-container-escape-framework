@@ -21,7 +21,9 @@ jobs:
     - name: Install BPF dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y clang llvm libbpf-dev libelf-dev make gcc
+                sudo apt-get install -y clang llvm libbpf-dev libelf-dev make gcc
+        # Install bpftool for the current runner kernel to generate vmlinux.h
+        sudo apt-get install -y linux-tools-$(uname -r) || sudo apt-get install -y linux-tools-generic
 
     - name: Build BPF object
       run: make kernel
