@@ -1,9 +1,8 @@
 # eBPF Container Escape & Runtime Threat Detection Framework
 
-[![CI](https://github.com/0xmfbk/ebpf-container-escape-framework/actions/workflows/ci.yml/badge.svg)](https://github.com/0xmfbk/ebpf-container-escape-framework/actions/workflows/ci.yml)
-[![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-
-![Demo](docs/demo.gif)
+<p align="center">
+  <img src="docs/demo.gif" alt="Demo" width="800">
+</p>
 
 An audit-only Linux EDR agent built with eBPF (kernel side, C) and a
 high-efficiency Go daemon (user space). Targets Debian 13 / kernel 6.12+
