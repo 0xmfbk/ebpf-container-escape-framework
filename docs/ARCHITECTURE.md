@@ -6,8 +6,10 @@ Kernel tracepoints and kprobes (14 hooks) feed a single filter stage
 (is_filtered + action_enabled lookup), then reserve a 208-byte record on
 a 1 MiB ringbuf. Userspace reads the ringbuf into fixed-size pooled
 records, applies a per-action token bucket, enriches with process lineage
-and cgroup path from bounded LRU caches, and serializes JSON with a
-sync.Pool buffer to both stdout and /var/log/ebpf_edr.json.
+and cgroup path from bounded LRU caches, and dispatches to a Sink.
+
+The Sink encodes the event (JSON, ECS, OCSF, CEF, or LEEF) and routes it
+to the configured transport (file, stdout, syslog, or webhook).
 
 ## Kernel Components
 
@@ -27,7 +29,10 @@ sync.Pool buffer to both stdout and /var/log/ebpf_edr.json.
 | lineage.go | process ancestry cache (LRU 20000) |
 | cgroup_path.go | cgroup path cache (LRU 5000) |
 | container_resolver.go | cgroup ID to container ID + runtime |
-| serializer.go | zero-alloc JSON via sync.Pool |
+| serializer.go | zero-alloc JSON serializer |
+| format_*.go | ECS, OCSF, CEF, LEEF encoders |
+| output.go | Sink interface, network queue, circuit breaker |
+| output_*.go | syslog and webhook transports |
 | logger.go | rotation, dual sink (file + stdout) |
 
 ## Cache Bounds
@@ -37,6 +42,7 @@ sync.Pool buffer to both stdout and /var/log/ebpf_edr.json.
 | container | 5000 | LRU | above 90 percent |
 | lineage | 20000 | LRU | above 95 percent |
 | cgroup path | 5000 | LRU | above 95 percent |
+| network sink queue | 10000 | drop-oldest | N/A |
 
 ## Event Versioning
 

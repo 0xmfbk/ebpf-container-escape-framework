@@ -21,20 +21,31 @@ Created by install:
     sudo kill -HUP $(pgrep ebpf-edr)
 
 Reloadable: log.level, rates.*, filter.*, disabled_actions.
-Requires restart: log.path, log.max_bytes, context.*, container.cache_max_entries.
+Requires restart: log.path, log.max_bytes, context.*, container.cache_max_entries, output.*.
+
+## Verification Commands
+
+| Command | Purpose |
+|---------|---------|
+| `sudo -E make verify` | Runs 15-stage core verifier + 2-stage SIEM verifier |
+| `make verify-siem` | Runs only the SIEM format matrix and webhook tests |
+| `make ci` | Runs gofmt, vet, race, fuzz, and all verifiers |
 
 ## Health log
 
 Every 60s (configurable via --health-interval), the daemon writes a single
 line containing recv, written, dropped, rate_limited, parse_err,
 ver_mismatch, ringbuf_err, reloads, reload_fail, chan, lineage_cache,
-lineage_hits, lineage_misses, cgroup_cache.
+lineage_hits, lineage_misses, cgroup_cache, sink_sent, sink_failed,
+sink_dropped, sink_retries, sink_queue, sink_circuit.
 
 Watch for:
 
 - dropped and rate_limited near zero in steady state
 - ver_mismatch always zero (nonzero means C and Go struct drift)
 - lineage_cache staying below capacity
+- sink_dropped climbing (SIEM is down or too slow)
+- sink_circuit=true (SIEM was unreachable; daemon is protecting itself)
 
 ## Troubleshooting
 
@@ -74,4 +85,18 @@ lineage_max_depth  = 16
 lineage_cache_size = 20000
 cgroup_cache_size  = 5000
 
-disabled_actions = []
+[output]
+format = "json"      # json | ecs | ocsf | cef | leef
+target = "file"      # file | stdout | syslog | webhook
+path   = "/var/log/ebpf_edr.json"
+
+[output.syslog]
+network = "udp"
+address = "siem.internal:514"
+tag     = "ebpf-edr"
+
+[output.webhook]
+url         = ""
+auth_header = ""
+splunk_hec  = false
+batch_size  = 100

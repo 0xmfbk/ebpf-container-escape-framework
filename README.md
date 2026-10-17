@@ -5,7 +5,7 @@ high-efficiency Go daemon (user space). Targets Debian 13 / kernel 6.12+
 with BTF enabled. Emits structured JSON with full process lineage and
 cgroup context, backed by a zero-allocation pipeline and bounded caches.
 
-**Status:** Phase 2.5 complete. 13 MITRE ATT&CK techniques covered.
+**Status:** Phase 2.6 complete. 13 MITRE ATT&CK techniques covered.
 Verified end-to-end on kernel 6.12.111.
 
 ## Coverage
@@ -34,11 +34,33 @@ Actions 9 and 13 are attached but kernel-side-suppressed by default via
 Kernel hooks (14) feed a comm/cgroup filter, then an `action_enabled`
 lookup, then a 1 MiB ringbuf carrying 208-byte records. Userspace reads
 into a fixed pooled buffer, applies a per-action token bucket, enriches
-with process lineage and cgroup path from bounded LRU caches, and writes
-JSON to stdout and `/var/log/ebpf_edr.json` via a zero-allocation
-serializer.
+with process lineage and cgroup path from bounded LRU caches, and routes
+through an Encoder + Sink to any destination.
 
 Full details: `docs/ARCHITECTURE.md`.
+
+## SIEM Integration
+
+`ebpf-edr` exports alerts to any SIEM via a format + transport layer.
+
+```toml
+[output]
+format = "ecs"        # json | ecs | ocsf | cef | leef
+target = "webhook"    # file | stdout | syslog | webhook
+
+[output.webhook]
+url         = "https://splunk.internal:8088/services/collector/event"
+auth_header = "Splunk ${SPLUNK_HEC_TOKEN}"
+splunk_hec  = true
+```
+
+Supported transports: file, stdout, syslog (UDP/TCP/TLS), HTTPS webhook.
+Supported formats: native JSON, ECS 8.11, OCSF 1.3.0, CEF, LEEF 2.0.
+
+Recipes for Splunk, Elastic, Sentinel, QRadar, and generic syslog:
+`docs/SIEM_INTEGRATION.md`.
+
+Absent `[output]`, behavior is byte-identical to v1.x.
 
 ## Requirements
 
@@ -53,13 +75,14 @@ Full details: `docs/ARCHITECTURE.md`.
     make userspace     # userspace/ebpf_controller
     make emulation     # emulation/adversary
 
-## Verify (13 stages)
+## Verify (15 core stages + 2 SIEM stages)
 
     sudo -E make verify
 
 Runs environment probe, build, C/Go struct layout assertion, BPF verifier
 dry-run, runtime smoke, adversary emulation, performance, config matrix,
-SIGHUP reload, idle CPU, lineage enrichment, cache bounds, new hooks.
+SIGHUP reload, idle CPU, lineage enrichment, cache bounds, new hooks,
+format matrix, and webhook delivery.
 
 ## Install (systemd)
 
@@ -140,6 +163,8 @@ Health line every 60s:
              ver_mismatch=N ringbuf_err=N reloads=N reload_fail=N
              chan=N/4096 lineage_cache=N/20000 lineage_hits=N
              lineage_misses=N cgroup_cache=N/5000
+             sink_sent=N sink_failed=N sink_dropped=N sink_retries=N
+             sink_queue=N sink_circuit=bool
 
 Targets: `dropped` = 0, `ver_mismatch` = 0, `lineage_cache` under capacity.
 
@@ -153,7 +178,8 @@ Targets: `dropped` = 0, `ver_mismatch` = 0, `lineage_cache` under capacity.
 | `make test` | Go unit tests |
 | `make test-race` | Go tests with race detector |
 | `make fuzz` | 60s fuzz per target |
-| `make verify` | 13-stage full verification |
+| `make verify` | 15-stage core + 2-stage SIEM verification |
+| `make verify-siem` | 2-stage SIEM verification only |
 | `make ci` | Local CI: gofmt, vet, race, fuzz, verify |
 | `make install` / `uninstall` | System install / removal |
 | `make test-attacks` | Emulation coverage assertions |
@@ -165,37 +191,14 @@ Targets: `dropped` = 0, `ver_mismatch` = 0, `lineage_cache` under capacity.
 - `docs/OPERATIONS.md` — install, config, reload, troubleshooting
 - `docs/MITRE_MATRIX.md` — full technique mapping with hook names
 - `docs/SECURITY.md` — threat model, capabilities, sandbox, failure modes
+- `docs/SIEM_INTEGRATION.md` — Splunk, Elastic, Sentinel, QRadar recipes
 
 ## Verification evidence
 
-Last full run (kernel 6.12.111+deb13-amd64): **72 PASS, 1 WARN, 0 FAIL**
-across 13 stages. The one WARN is the synthetic perf workload's CPU
-reading; idle CPU is verified separately at 0.70%.
+Last full run (kernel 6.12.111+deb13-amd64): **79 PASS, 1 WARN, 0 FAIL**
+across 15+2 stages. The one WARN is the synthetic perf workload's CPU
+reading; idle CPU is verified separately at 0.40%.
 
 ## License
 
 MIT
-
-## SIEM Integration
-
-`ebpf-edr` exports alerts to any SIEM via a format + transport layer.
-
-```toml
-[output]
-format = "ecs"        # json | ecs | ocsf | cef | leef
-target = "webhook"    # file | stdout | syslog | webhook
-
-[output.webhook]
-url         = "https://splunk.internal:8088/services/collector/event"
-auth_header = "Splunk ${SPLUNK_HEC_TOKEN}"
-splunk_hec  = true
-```
-
-Supported transports: file, stdout, syslog (UDP/TCP/TLS), HTTPS webhook.
-Supported formats: native JSON, ECS 8.11, OCSF 1.3.0, CEF, LEEF 2.0.
-
-Recipes for Splunk, Elastic, Sentinel, QRadar, and generic syslog:
-`docs/SIEM_INTEGRATION.md`.
-
-Absent `[output]`, behavior is byte-identical to v1.x.
-

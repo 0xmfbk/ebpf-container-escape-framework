@@ -42,6 +42,7 @@ plane, not a prevention plane.
 | Cache full | LRU evicts oldest entry |
 | Config reload parse error | Current config preserved; counter incremented |
 | BPF verifier rejects | Startup aborts; systemd Restart=on-failure |
+| SIEM endpoint down | Network queue fills (10k max), then drops; circuit breaker trips after 5 failures |
 
 ## Out of Scope
 
