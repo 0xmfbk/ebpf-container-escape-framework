@@ -107,13 +107,21 @@ func LoadConfig(path string) (Config, error) {
 	if path == "" {
 		return cfg, nil
 	}
-	if _, err := os.Stat(path); err != nil {
+
+	info, err := os.Stat(path)
+	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return cfg, nil
 		}
 		return cfg, fmt.Errorf("stat config: %w", err)
 	}
+
+	// Security: Prevent DoS via massive config files that hang the parser
+	if info.Size() > 1024*1024 { // 1 MB limit
+		return cfg, errors.New("config file too large (max 1MB)")
+	}
 	md, err := toml.DecodeFile(path, &cfg)
+
 	if err != nil {
 		return cfg, fmt.Errorf("parse config: %w", err)
 	}
