@@ -11,11 +11,12 @@
 > [`THREAT_MODEL.md`](THREAT_MODEL.md).
 
 An audit only Linux EDR agent built with eBPF (kernel side, C) and a
-high efficiency Go daemon (user space). Targets Debian 13 / kernel 6.12+
-with BTF enabled. Emits structured JSON with full process lineage and
-cgroup context, backed by a zero allocation pipeline and bounded caches.
+high efficiency Go daemon (user space). Targets Linux kernel 5.15 LTS
+and above (tested on Debian 13 / kernel 6.12+) with BTF enabled. 
+Emits structured JSON with full process lineage and cgroup context, 
+backed by a zero allocation pipeline and bounded caches.
 
-**Status:** Phase 2.6 complete. 13 MITRE ATT&CK techniques across 15 actions.
+**Status:** Phase 2.7 complete. 13 MITRE ATT&CK techniques across 15 actions.
 Verified end to end on kernel 6.12.111, with structural support for Linux 5.15 LTS.
 
 ## Coverage
@@ -113,6 +114,11 @@ Installs `/usr/local/sbin/ebpf-edr`,
 TOML at `/etc/ebpf-edr/config.toml`. Precedence: CLI > env (`EDR_*`) > file > defaults.
 
     mode = "audit"
+    
+    disabled_actions = [
+        "Perf_Event_Open",
+        "Executable_Memory",
+    ]
 
     [log]
     path        = "/var/log/ebpf_edr.json"
@@ -135,8 +141,6 @@ TOML at `/etc/ebpf-edr/config.toml`. Precedence: CLI > env (`EDR_*`) > file > de
     lineage_max_depth  = 16
     lineage_cache_size = 20000
     cgroup_cache_size  = 5000
-
-    disabled_actions = []
 
 Reload: `sudo systemctl reload ebpf-edr`. `mode = "enforce"` is rejected;
 this build is audit only.
@@ -204,14 +208,15 @@ Targets: `dropped` = 0, `ver_mismatch` = 0, `lineage_cache` under capacity.
 - `docs/MITRE_MATRIX.md` - full technique mapping with hook names.
 - `docs/SECURITY.md` - threat model, capabilities, sandbox, failure modes.
 - `docs/SIEM_INTEGRATION.md` - Splunk, Elastic, Sentinel, QRadar recipes.
+- `docs/KERNEL_COMPATIBILITY.md` - kernel floor (5.15 LTS), feature matrix, and vmlinux.h pinning policy.
 - `SECURITY.md` - vulnerability disclosure policy and supported versions.
 - `CONTRIBUTING.md` - contribution workflow and local CI gate.
 - `CODE_OF_CONDUCT.md` - community standards.
-- `docs/KERNEL_COMPATIBILITY.md` - kernel floor (5.15 LTS), feature matrix, and vmlinux.h pinning policy.
+- `THREAT_MODEL.md` - threat model and security assumptions.
 
 ## Verification evidence
 
-Last full run (kernel 6.12.111+deb13-amd64): **79 PASS, 1 WARN, 0 FAIL**
+Last full run (kernel 6.12.111+deb13-amd64): **82 PASS, 1 WARN, 0 FAIL**
 across 15+2 stages. The one WARN is the synthetic perf workload's CPU
 reading, idle CPU is verified separately at 0.40%.
 
@@ -225,6 +230,8 @@ The framework is designed to run as a Kubernetes DaemonSet to provide cluster wi
 ### Build the Docker Image
 
     make docker-build
+
+Note: The Dockerfile copies the pre-compiled `kernel/bpf_program.o` from the host to avoid clang verifier limits inside the container. Run `make kernel` before `make docker-build`.
 
 ### Deploy to Kubernetes (Raw Manifests)
 
@@ -249,3 +256,4 @@ To send alerts to a SIEM webhook via Helm:
 - **`privileged: true`**: Required for `CAP_BPF`, `CAP_PERFMON`, `CAP_SYS_ADMIN`.
 - **Host Mounts**: Mounts `/sys/kernel/btf/vmlinux` and `/sys/fs/bpf` from the host.
 - **Resource Limits**: Default limits (256Mi memory, 500m CPU) ensure the DaemonSet cannot starve the node.
+- **Root Filesystem**: Mounted as `readOnlyRootFilesystem: true` to prevent container escape via filesystem writes.
