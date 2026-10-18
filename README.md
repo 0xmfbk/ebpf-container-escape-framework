@@ -24,7 +24,7 @@ An ultra lightweight, audit only Linux EDR agent built with eBPF (C) and a high 
 
 ### ✨ Why this framework?
 *   **🎯 Canary Files (Zero False Positives):** Plant invisible paths in the kernel. If an attacker touches them (e.g., K8s service account tokens), it triggers a `CRITICAL` alert instantly.
-*   **☁️ K8s Context Enrichment:** Asynchronously polls the Kubelet API to map `cgroup_id` to Pod Name, Namespace, and ServiceAccount—without inflating the 208-byte kernel wire format.
+*   **☁️ K8s Context Enrichment:** Asynchronously polls the Kubelet API to map `cgroup_id` to Pod Name, Namespace, and ServiceAccount without inflating the 208-byte kernel wire format.
 *   **🐧 5.15 LTS Compatible:** Structural support for Ubuntu 22.04 and Debian 12, tested and verified on Kernel 6.12.
 *   **⚡ High Performance:** `0.40%` idle CPU and `0` ringbuf drops under a 25,000 fork stress test.
 
