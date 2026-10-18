@@ -50,16 +50,17 @@ Verified end to end on kernel 6.12.111 (82 PASS / 0 FAIL).
 | 13 | Executable_Memory | MEDIUM | T1620 | tracepoint/sys_enter_mprotect |
 | 14 | Core_Pattern_Modification | CRITICAL | T1611 | tracepoint/sys_enter_openat + open |
 | 15 | Cgroup_Release_Agent | CRITICAL | T1611 | tracepoint/sys_enter_openat + open |
+| 16 | Canary_Triggered | CRITICAL | T1552.001 | tracepoint/sys_enter_openat + open |
 
 Actions 9 and 13 are attached but kernel side suppressed by default via
 `disabled_actions` in `config.toml`.
 
 ## Architecture
 
-Kernel hooks (14) feed a comm/cgroup filter, then an `action_enabled`
-lookup, then a 1 MiB ringbuf carrying 208 byte records. Userspace reads
-into a fixed pooled buffer, applies a per action token bucket, enriches
-with process lineage and cgroup path from bounded LRU caches, and routes
+Kernel hooks (14) feed a comm/cgroup filter, a canary_paths O(1) hash lookup,
+then an action_enabled lookup. Events are pushed to a 1 MiB ringbuf carrying 208 byte records.
+Userspace reads into a fixed pooled buffer, applies a per action token bucket, enriches
+with process lineage and cgroup path, and K8s Pod metadata from bounded LRU caches, and routes
 through an Encoder + Sink to any destination.
 
 Full details: `docs/ARCHITECTURE.md`.
@@ -141,6 +142,10 @@ TOML at `/etc/ebpf-edr/config.toml`. Precedence: CLI > env (`EDR_*`) > file > de
     [filter]
     comm_allowlist   = []
     cgroup_allowlist = []
+    canary_paths     = ["/var/run/secrets/kubernetes.io/serviceaccount/token"]
+
+    [k8s]
+    enrichment = true
 
     [rates]
     events_per_sec = 200
