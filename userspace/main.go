@@ -24,7 +24,7 @@ const (
 	eventWords        = eventSize / 8
 	eventVersion      = 3
 	defaultHealthTick = 60 * time.Second
-	ActionMaxID       = 16
+	ActionMaxID       = 17
 )
 
 /* Action IDs - must match enum event_action in common.h */
@@ -45,6 +45,7 @@ const (
 	ActionExecutableMemory          = 13
 	ActionCorePatternModification   = 14
 	ActionCgroupReleaseAgent        = 15
+	ActionCanaryTriggered 			= 16
 )
 
 var actionNames = map[uint32]string{
@@ -63,6 +64,7 @@ var actionNames = map[uint32]string{
 	ActionExecutableMemory:          "Executable_Memory",
 	ActionCorePatternModification:   "Core_Pattern_Modification",
 	ActionCgroupReleaseAgent:        "Cgroup_Release_Agent",
+	ActionCanaryTriggered: 			 "Canary_Triggered",
 }
 
 type event_t struct {
@@ -84,29 +86,32 @@ type event_t struct {
 }
 
 type SecurityAlert struct {
-	Timestamp        string         `json:"timestamp"`
-	PID              uint32         `json:"pid"`
-	PPID             uint32         `json:"ppid"`
-	UID              uint32         `json:"uid"`
-	StartTimeNs      uint64         `json:"start_time_ns"`
-	Command          string         `json:"command"`
-	Action           string         `json:"action"`
-	Target           string         `json:"target,omitempty"`
-	Severity         string         `json:"severity"`
-	MitreID          string         `json:"mitre_id"`
-	MitreTechnique   string         `json:"mitre_technique"`
-	CgroupID         uint64         `json:"cgroup_id"`
-	ContainerID      string         `json:"container_id,omitempty"`
-	Runtime          string         `json:"runtime"`
-	DestIP           string         `json:"dest_ip,omitempty"`
-	DestPort         uint16         `json:"dest_port,omitempty"`
-	CgroupPath       string         `json:"cgroup_path,omitempty"`
-	LineageSummary   string         `json:"lineage_summary,omitempty"`
-	Lineage          []lineageEntry `json:"lineage,omitempty"`
-	LineageTruncated bool           `json:"lineage_truncated,omitempty"`
-	AuxU16           uint16         `json:"aux_u16,omitempty"`
-	AuxU32           uint32         `json:"aux_u32,omitempty"`
-	AuxU64           uint64         `json:"aux_u64,omitempty"`
+	Timestamp         string         `json:"timestamp"`
+	PID               uint32         `json:"pid"`
+	PPID              uint32         `json:"ppid"`
+	UID               uint32         `json:"uid"`
+	StartTimeNs       uint64         `json:"start_time_ns"`
+	Command           string         `json:"command"`
+	Action            string         `json:"action"`
+	Target            string         `json:"target,omitempty"`
+	Severity          string         `json:"severity"`
+	MitreID           string         `json:"mitre_id"`
+	MitreTechnique    string         `json:"mitre_technique"`
+	CgroupID          uint64         `json:"cgroup_id"`
+	ContainerID       string         `json:"container_id,omitempty"`
+	Runtime           string         `json:"runtime"` // Only one declaration of Runtime
+	K8sPodName        string         `json:"k8s_pod_name,omitempty"`
+	K8sNamespace      string         `json:"k8s_namespace,omitempty"`
+	K8sServiceAccount string         `json:"k8s_service_account,omitempty"`
+	DestIP            string         `json:"dest_ip,omitempty"`
+	DestPort          uint16         `json:"dest_port,omitempty"`
+	CgroupPath        string         `json:"cgroup_path,omitempty"`
+	LineageSummary    string         `json:"lineage_summary,omitempty"`
+	Lineage           []lineageEntry `json:"lineage,omitempty"`
+	LineageTruncated  bool           `json:"lineage_truncated,omitempty"`
+	AuxU16            uint16         `json:"aux_u16,omitempty"`
+	AuxU32            uint32         `json:"aux_u32,omitempty"`
+	AuxU64            uint64         `json:"aux_u64,omitempty"`
 }
 
 var suspiciousPorts = map[uint16]bool{4444: true, 1337: true, 31337: true, 6666: true, 6697: true}
@@ -153,6 +158,8 @@ func calculateSeverity(action, command, target string, destPort uint16) (string,
 		return "CRITICAL", "T1611", "Escape to Host: core_pattern"
 	case "Cgroup_Release_Agent":
 		return "CRITICAL", "T1611", "Escape to Host: cgroup release_agent"
+	case "Canary_Triggered":
+	    return "CRITICAL", "T1552.001", "Unsecured Credentials: Canary File Accessed"
 	default:
 		return "INFO", "T1204", "User Execution"
 	}
@@ -237,7 +244,9 @@ func main() {
 	resolver := newContainerResolver()
 	lineageC := newLineageCache(loaded.Context.LineageCacheSize)
 	cgroupC := newCgroupPathCache(loaded.Context.CgroupCacheSize)
-
+	k8sResolver := newK8sResolver()
+	defer k8sResolver.Close()
+	
 	// ---- Output sink (Phase 2.6) ----
 	enc, err := newEncoder(loaded.Output.Format)
 	if err != nil {
@@ -514,6 +523,7 @@ func main() {
 			filename := cstr(ev.Filename[:])
 			severity, mitreID, mitreTechnique := calculateSeverity(action, comm, filename, ev.DestPort)
 			container := resolver.resolve(ev.CgroupID, ev.Pid)
+			k8sInfo, _ := k8sResolver.Lookup(container.ContainerID)
 
 			var lineageBuf [16]lineageEntry
 			lineage, lineageComplete := lineageC.buildLineage(
@@ -567,6 +577,9 @@ func main() {
 				AuxU16:           ev.AuxU16,
 				AuxU32:           ev.AuxU32,
 				AuxU64:           ev.AuxU64,
+				K8sPodName:       k8sInfo.PodName,
+				K8sNamespace:     k8sInfo.Namespace,
+				K8sServiceAccount:k8sInfo.ServiceAccount,
 			}
 
 			sink.Submit(&alert)

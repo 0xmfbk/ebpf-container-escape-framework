@@ -25,7 +25,8 @@ enum event_action {
     ACTION_EXECUTABLE_MEMORY           = 13,
     ACTION_CORE_PATTERN_MODIFICATION   = 14,
     ACTION_CGROUP_RELEASE_AGENT        = 15,
-    ACTION__MAX                        = 16,
+    ACTION_CANARY_TRIGGERED            = 16,
+    ACTION__MAX                        = 17,
 };
 
 /* Event flags (bitfield in event_t.flags). */

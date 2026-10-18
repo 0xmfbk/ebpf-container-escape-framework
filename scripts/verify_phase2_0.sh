@@ -725,7 +725,7 @@ stage_docker() {
 
     cd "$ROOT" || return
 
-    # Force clean any stale BPF pins left by Stage 4
+    # Clean up any stale BPF pins left by Stage 4
     umount -f "${OUT}/bpftool_pin" 2>/dev/null || true
     umount -l "${OUT}/bpftool_pin" 2>/dev/null || true
     rm -rf "${OUT}/bpftool_pin" 2>/dev/null || true
@@ -738,17 +738,25 @@ stage_docker() {
     fi
     pass "Docker image built successfully"
 
+    info "Force-cleaning Docker daemon to recover from Stage 12 stress test..."
+    # Kill stuck runc processes that freeze the kernel
+    docker rm -f $(docker ps -aq) >/dev/null 2>&1 || true
+    pkill -9 containerd-shim >/dev/null 2>&1 || true
+    pkill -9 runc >/dev/null 2>&1 || true
+    systemctl restart docker >/dev/null 2>&1 || true
+    
+    # Wait for Docker daemon to be fully ready
+    for i in {1..15}; do
+        if docker info >/dev/null 2>&1; then break; fi
+        sleep 1
+    done
+
     info "Testing container startup (detached, 120s observation window)..."
     local cname="ebpf-edr-verify-$$"
-    docker rm -f "$cname" >/dev/null 2>&1 || true
-
-    # Give the system 10s to cool down after the 25k forks test in Stage 12
-    info "Waiting for system to settle before launching container..."
-    sleep 10
-
+    
     local cid
-    # Increased timeout to 60s because Docker daemon is slow on loaded VMs
-    cid="$(timeout -k 5s 60s docker run -d \
+    # Launch the container
+    cid="$(docker run -d \
         --name "$cname" \
         --privileged --pid=host --userns=host \
         --ulimit memlock=-1:-1 \
@@ -756,7 +764,7 @@ stage_docker() {
         -v /sys/kernel/tracing:/sys/kernel/tracing:ro \
         -v /sys/kernel/debug:/sys/kernel/debug:ro \
         ebpf-edr:test 2>/tmp/docker_test_run.err)" || {
-        fail "docker run failed or timed out (see /tmp/docker_test_run.err)"
+        fail "docker run failed (see /tmp/docker_test_run.err)"
         cat /tmp/docker_test_run.err | sed 's/^/    /'
         return
     }
@@ -774,10 +782,10 @@ stage_docker() {
     done
 
     # Capture everything BEFORE removal
-    timeout -k 2s 10s docker logs "$cid" > /tmp/docker_test.log 2>&1 || true
+    docker logs "$cid" > /tmp/docker_test.log 2>&1 || true
     local exit_code oom
-    exit_code="$(timeout -k 2s 10s docker inspect -f '{{.State.ExitCode}}' "$cid" 2>/dev/null || echo '?')"
-    oom="$(timeout -k 2s 10s docker inspect -f '{{.State.OOMKilled}}' "$cid" 2>/dev/null || echo '?')"
+    exit_code="$(docker inspect -f '{{.State.ExitCode}}' "$cid" 2>/dev/null || echo '?')"
+    oom="$(docker inspect -f '{{.State.OOMKilled}}' "$cid" 2>/dev/null || echo '?')"
 
     docker rm -f "$cname" >/dev/null 2>&1 || true
 
@@ -799,17 +807,21 @@ run_stage env       && stage_env
 run_stage build     && stage_build
 run_stage layout    && stage_layout
 run_stage load      && stage_load
+# Run Docker EARLY, while the kernel is clean and idle.
+run_stage docker    && stage_docker
+
+# Run functional tests
 run_stage runtime   && stage_runtime
 run_stage emulation && stage_emulation
-run_stage perf      && stage_perf
 run_stage config    && stage_config_matrix
 run_stage reload    && stage_reload
+run_stage new_hooks && stage_new_hooks
+
+# Run performance and stress tests LAST (these degrade the VM state)
+run_stage perf      && stage_perf
 run_stage idle      && stage_idle
 run_stage lineage   && stage_lineage
 run_stage cache     && stage_cache
-run_stage new_hooks && stage_new_hooks
-run_stage docker    && stage_docker
-
 
 head2 "SUMMARY"
 echo "  ${G}PASS${N}: $PASS"

@@ -35,14 +35,21 @@ struct {
     __type(value, __u32);
 } cgroup_allowlist SEC(".maps");
 
-/* Indexed by action_id. 1 = emit, 0 = drop. Populated by userspace before
- * attach. ARRAY so lookups are O(1) and cannot fail for valid keys. */
+/* MUST KEEP THIS MAP */
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __uint(max_entries, 32);
     __type(key, __u32);
     __type(value, __u32);
 } action_enabled SEC(".maps");
+
+/* ADDED FOR TASK 5 */
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 128);
+    __type(key, char[MAX_FILENAME_LEN]);
+    __type(value, __u32);
+} canary_paths SEC(".maps");
 
 /* ================== Helpers ================== */
 
@@ -198,12 +205,22 @@ int trace_openat(struct trace_event_raw_sys_enter_openat *ctx)
         return 0;
 
     __u32 action = 0;
-    if (is_shadow_path(path) || is_container_runtime_socket_path(path))
+    
+    // 1. Check Canary Map first (Highest priority)
+    if (bpf_map_lookup_elem(&canary_paths, path)) {
+        action = ACTION_CANARY_TRIGGERED;
+    }
+    // 2. Fallback to static checks
+    else if (is_shadow_path(path) || is_container_runtime_socket_path(path)) {
         action = ACTION_SENSITIVE_FILE_ACCESS;
-    else if (is_kernel_helper_path(path))
+    }
+    else if (is_kernel_helper_path(path)) {
         action = ACTION_CORE_PATTERN_MODIFICATION;
-    else if (is_cgroup_release_agent_path(path))
+    }
+    else if (is_cgroup_release_agent_path(path)) {
         action = ACTION_CGROUP_RELEASE_AGENT;
+    }
+    
     if (!action)
         return 0;
 
@@ -235,12 +252,22 @@ int trace_open(struct trace_event_raw_sys_enter_open *ctx)
         return 0;
 
     __u32 action = 0;
-    if (is_shadow_path(path) || is_container_runtime_socket_path(path))
+    
+    // 1. Check Canary Map first (Highest priority)
+    if (bpf_map_lookup_elem(&canary_paths, path)) {
+        action = ACTION_CANARY_TRIGGERED;
+    }
+    // 2. Fallback to static checks
+    else if (is_shadow_path(path) || is_container_runtime_socket_path(path)) {
         action = ACTION_SENSITIVE_FILE_ACCESS;
-    else if (is_kernel_helper_path(path))
+    }
+    else if (is_kernel_helper_path(path)) {
         action = ACTION_CORE_PATTERN_MODIFICATION;
-    else if (is_cgroup_release_agent_path(path))
+    }
+    else if (is_cgroup_release_agent_path(path)) {
         action = ACTION_CGROUP_RELEASE_AGENT;
+    }
+    
     if (!action)
         return 0;
 

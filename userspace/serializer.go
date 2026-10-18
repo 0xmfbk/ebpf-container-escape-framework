@@ -45,6 +45,15 @@ func writeAlertJSON(buf *bytes.Buffer, a *SecurityAlert) {
 	buf.WriteString(`,"runtime":"`)
 	writeEscaped(buf, a.Runtime)
 	buf.WriteByte('"')
+	if a.K8sPodName != "" {
+		buf.WriteString(`,"k8s_pod_name":"`)
+		writeEscaped(buf, a.K8sPodName)
+		buf.WriteString(`","k8s_namespace":"`)
+		writeEscaped(buf, a.K8sNamespace)
+		buf.WriteString(`","k8s_service_account":"`)
+		writeEscaped(buf, a.K8sServiceAccount)
+		buf.WriteByte('"')
+	}
 	if a.ContainerID != "" {
 		buf.WriteString(`,"container_id":"`)
 		writeEscaped(buf, a.ContainerID)
