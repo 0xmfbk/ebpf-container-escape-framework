@@ -1,5 +1,7 @@
 # eBPF Container Escape Detection & Runtime Audit EDR
 
+[![CI](https://github.com/0xmfbk/ebpf-container-escape-framework/actions/workflows/ci.yml/badge.svg)](https://github.com/0xmfbk/ebpf-container-escape-framework/actions/workflows/ci.yml)
+
 <p align="center">
   <img src="docs/demo.gif" alt="Demo" width="800">
 </p>
