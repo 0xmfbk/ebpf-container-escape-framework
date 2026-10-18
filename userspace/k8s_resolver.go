@@ -2,7 +2,9 @@ package main
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -48,10 +50,25 @@ func newK8sResolver() *K8sResolver {
 		stop:  make(chan struct{}),
 	}
 
-	// Kubelet uses a self-signed cert on 10250. We connect via localhost.
-	// In a production environment, you should supply the CA and client certs.
+	// Kubelet uses TLS on 10250. Verify certificates using the Kubernetes CA.
+	caPath := "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+	tlsConfig := &tls.Config{
+		ServerName: "localhost",
+	}
+
+	if caPEM, err := os.ReadFile(caPath); err == nil {
+		pool := x509.NewCertPool()
+		if ok := pool.AppendCertsFromPEM(caPEM); ok {
+			tlsConfig.RootCAs = pool
+		} else {
+			fmt.Printf("warning: failed to parse kube CA cert at %s; using system roots\n", caPath)
+		}
+	} else {
+		fmt.Printf("warning: failed to read kube CA cert at %s: %v; using system roots\n", caPath, err)
+	}
+
 	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig: tlsConfig,
 	}
 	res.client = &http.Client{
 		Transport: tr,
