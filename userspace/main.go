@@ -45,7 +45,7 @@ const (
 	ActionExecutableMemory          = 13
 	ActionCorePatternModification   = 14
 	ActionCgroupReleaseAgent        = 15
-	ActionCanaryTriggered 			= 16
+	ActionCanaryTriggered           = 16
 )
 
 var actionNames = map[uint32]string{
@@ -64,7 +64,7 @@ var actionNames = map[uint32]string{
 	ActionExecutableMemory:          "Executable_Memory",
 	ActionCorePatternModification:   "Core_Pattern_Modification",
 	ActionCgroupReleaseAgent:        "Cgroup_Release_Agent",
-	ActionCanaryTriggered: 			 "Canary_Triggered",
+	ActionCanaryTriggered:           "Canary_Triggered",
 }
 
 type event_t struct {
@@ -159,7 +159,7 @@ func calculateSeverity(action, command, target string, destPort uint16) (string,
 	case "Cgroup_Release_Agent":
 		return "CRITICAL", "T1611", "Escape to Host: cgroup release_agent"
 	case "Canary_Triggered":
-	    return "CRITICAL", "T1552.001", "Unsecured Credentials: Canary File Accessed"
+		return "CRITICAL", "T1552.001", "Unsecured Credentials: Canary File Accessed"
 	default:
 		return "INFO", "T1204", "User Execution"
 	}
@@ -246,7 +246,7 @@ func main() {
 	cgroupC := newCgroupPathCache(loaded.Context.CgroupCacheSize)
 	k8sResolver := newK8sResolver()
 	defer k8sResolver.Close()
-	
+
 	// ---- Output sink (Phase 2.6) ----
 	enc, err := newEncoder(loaded.Output.Format)
 	if err != nil {
@@ -554,32 +554,32 @@ func main() {
 			}
 
 			alert := SecurityAlert{
-				Timestamp:        time.Now().UTC().Format(time.RFC3339),
-				PID:              ev.Pid,
-				PPID:             ev.Ppid,
-				UID:              ev.Uid,
-				StartTimeNs:      ev.StartTimeNs,
-				Command:          comm,
-				Action:           action,
-				Target:           target,
-				Severity:         severity,
-				MitreID:          mitreID,
-				MitreTechnique:   mitreTechnique,
-				CgroupID:         ev.CgroupID,
-				ContainerID:      container.ContainerID,
-				Runtime:          container.Runtime,
-				CgroupPath:       cgroupPath,
-				LineageSummary:   lineageSummary,
-				Lineage:          lineage,
-				LineageTruncated: lineageTruncated,
-				DestIP:           destIPStr,
-				DestPort:         ev.DestPort,
-				AuxU16:           ev.AuxU16,
-				AuxU32:           ev.AuxU32,
-				AuxU64:           ev.AuxU64,
-				K8sPodName:       k8sInfo.PodName,
-				K8sNamespace:     k8sInfo.Namespace,
-				K8sServiceAccount:k8sInfo.ServiceAccount,
+				Timestamp:         time.Now().UTC().Format(time.RFC3339),
+				PID:               ev.Pid,
+				PPID:              ev.Ppid,
+				UID:               ev.Uid,
+				StartTimeNs:       ev.StartTimeNs,
+				Command:           comm,
+				Action:            action,
+				Target:            target,
+				Severity:          severity,
+				MitreID:           mitreID,
+				MitreTechnique:    mitreTechnique,
+				CgroupID:          ev.CgroupID,
+				ContainerID:       container.ContainerID,
+				Runtime:           container.Runtime,
+				CgroupPath:        cgroupPath,
+				LineageSummary:    lineageSummary,
+				Lineage:           lineage,
+				LineageTruncated:  lineageTruncated,
+				DestIP:            destIPStr,
+				DestPort:          ev.DestPort,
+				AuxU16:            ev.AuxU16,
+				AuxU32:            ev.AuxU32,
+				AuxU64:            ev.AuxU64,
+				K8sPodName:        k8sInfo.PodName,
+				K8sNamespace:      k8sInfo.Namespace,
+				K8sServiceAccount: k8sInfo.ServiceAccount,
 			}
 
 			sink.Submit(&alert)

@@ -36,7 +36,7 @@ type KubeletPodList struct {
 type K8sResolver struct {
 	mu    sync.RWMutex
 	cache map[string]K8sInfo // Key: ContainerID (without the "containerd://" prefix)
-	
+
 	client *http.Client
 	stop   chan struct{}
 }
