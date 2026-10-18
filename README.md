@@ -237,9 +237,6 @@ Last full run (kernel 6.12.111+deb13-amd64): **82 PASS, 1 WARN, 0 FAIL**
 across 15+2 stages. The one WARN is the synthetic perf workload's CPU
 reading, idle CPU is verified separately at 0.40%.
 
-## License
-
-MIT
 ## Kubernetes & Docker (Phase 2.7)
 
 The framework is designed to run as a Kubernetes DaemonSet to provide cluster wide EDR coverage.
@@ -274,3 +271,7 @@ To send alerts to a SIEM webhook via Helm:
 - **Host Mounts**: Mounts `/sys/kernel/btf/vmlinux` and `/sys/fs/bpf` from the host.
 - **Resource Limits**: Default limits (256Mi memory, 500m CPU) ensure the DaemonSet cannot starve the node.
 - **Root Filesystem**: Mounted as `readOnlyRootFilesystem: true` to prevent container escape via filesystem writes.
+
+## License 
+
+MIT
