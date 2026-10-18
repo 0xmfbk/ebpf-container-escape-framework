@@ -320,6 +320,7 @@ func main() {
 		CommAllow     *ebpf.Map     `ebpf:"comm_allowlist"`
 		CgAllow       *ebpf.Map     `ebpf:"cgroup_allowlist"`
 		ActionEnabled *ebpf.Map     `ebpf:"action_enabled"`
+		CanaryPaths   *ebpf.Map     `ebpf:"canary_paths"`
 	}
 	if err := spec.LoadAndAssign(&objs, nil); err != nil {
 		log.Fatalf("load objects: %v", err)
@@ -342,9 +343,13 @@ func main() {
 	defer objs.CommAllow.Close()
 	defer objs.CgAllow.Close()
 	defer objs.ActionEnabled.Close()
+	defer objs.CanaryPaths.Close()
 
 	if err := populateFilterMaps(objs.CommAllow, objs.CgAllow, loaded); err != nil {
 		log.Fatalf("populate filter maps: %v", err)
+	}
+	if err := populateCanaryMap(objs.CanaryPaths, loaded); err != nil {
+		log.Fatalf("populate canary map: %v", err)
 	}
 	if err := populateActionEnabled(objs.ActionEnabled, loaded); err != nil {
 		log.Fatalf("populate action_enabled: %v", err)
@@ -656,6 +661,18 @@ func populateFilterMaps(commMap, cgMap *ebpf.Map, c Config) error {
 		k := cg
 		if err := cgMap.Put(k, one); err != nil {
 			return fmt.Errorf("put cgroup %d: %w", cg, err)
+		}
+	}
+	return nil
+}
+
+func populateCanaryMap(m *ebpf.Map, c Config) error {
+	var one uint32 = 1
+	for _, p := range c.Filter.CanaryPaths {
+		var key [128]byte
+		copy(key[:], p)
+		if err := m.Put(key, one); err != nil {
+			return fmt.Errorf("put canary %q: %w", p, err)
 		}
 	}
 	return nil

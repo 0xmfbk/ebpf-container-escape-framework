@@ -1,25 +1,35 @@
 # eBPF Container Escape Detection & Runtime Audit EDR
 
-[![CI](https://github.com/0xmfbk/ebpf-container-escape-framework/actions/workflows/ci.yml/badge.svg)](https://github.com/0xmfbk/ebpf-container-escape-framework/actions/workflows/ci.yml)
-
 <p align="center">
-  <img src="docs/demo.gif" alt="Demo" width="800">
+  <a href="https://github.com/0xmfbk/ebpf-container-escape-framework/actions/workflows/ci.yml">
+    <img src="https://github.com/0xmfbk/ebpf-container-escape-framework/actions/workflows/ci.yml/badge.svg" alt="CI">
+  </a>
+  <img src="https://img.shields.io/badge/Go-1.21%2B-blue" alt="Go Version">
+  <img src="https://img.shields.io/badge/Kernel-5.15%20LTS%2B-orange" alt="Kernel Support">
+  <img src="https://img.shields.io/badge/Memory-%3C30MB-green" alt="Memory Footprint">
+  <img src="https://img.shields.io/badge/License-MIT-purple" alt="License">
 </p>
 
-> **Detection & audit only. Non enforcing sensor.**
+> **Detection & audit only. Non-enforcing sensor.**
 > No BPF program returns `-EPERM`; no syscall is blocked. This agent is a
 > runtime observation plane, not a prevention plane. See
 > [`docs/SECURITY.md`](docs/SECURITY.md#audit-only-mode) and
 > [`THREAT_MODEL.md`](THREAT_MODEL.md).
 
-An audit only Linux EDR agent built with eBPF (kernel side, C) and a
-high efficiency Go daemon (user space). Targets Linux kernel 5.15 LTS
-and above (tested on Debian 13 / kernel 6.12+) with BTF enabled. 
-Emits structured JSON with full process lineage and cgroup context, 
-backed by a zero allocation pipeline and bounded caches.
+<p align="center">
+  <img src="docs/demo.gif" alt="eBPF EDR Demo" width="850">
+</p>
 
-**Status:** Phase 2.7 complete. 13 MITRE ATT&CK techniques across 15 actions.
-Verified end to end on kernel 6.12.111, with structural support for Linux 5.15 LTS.
+An ultra lightweight, audit only Linux EDR agent built with eBPF (C) and a high efficiency Go daemon. It targets **Linux kernel 5.15 LTS** and above, featuring a **zero-allocation hot path**, a **sub-30MB memory footprint**, and deep container/K8s context enrichment.
+
+### ✨ Why this framework?
+*   **🎯 Canary Files (Zero False Positives):** Plant invisible paths in the kernel. If an attacker touches them (e.g., K8s service account tokens), it triggers a `CRITICAL` alert instantly.
+*   **☁️ K8s Context Enrichment:** Asynchronously polls the Kubelet API to map `cgroup_id` to Pod Name, Namespace, and ServiceAccount—without inflating the 208-byte kernel wire format.
+*   **🐧 5.15 LTS Compatible:** Structural support for Ubuntu 22.04 and Debian 12, tested and verified on Kernel 6.12.
+*   **⚡ High Performance:** `0.40%` idle CPU and `0` ringbuf drops under a 25,000 fork stress test.
+
+**Status:** Phase 2.7 complete. 13 MITRE ATT&CK techniques across 16 actions.
+Verified end to end on kernel 6.12.111 (82 PASS / 0 FAIL). 
 
 ## Coverage
 

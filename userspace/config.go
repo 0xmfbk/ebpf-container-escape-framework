@@ -30,6 +30,7 @@ type LogConfig struct {
 type FilterConfig struct {
 	CommAllowlist   []string `toml:"comm_allowlist"`
 	CgroupAllowlist []uint64 `toml:"cgroup_allowlist"`
+	CanaryPaths     []string `toml:"canary_paths"`
 }
 
 type RatesConfig struct {
