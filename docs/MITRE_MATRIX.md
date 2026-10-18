@@ -15,6 +15,8 @@
 | 11 | Namespace_Switch | HIGH | T1611 | Escape to Host: setns | tracepoint/sys_enter_setns |
 | 12 | Chroot_Escape | HIGH | T1611 | Escape to Host: chroot | tracepoint/sys_enter_chroot |
 | 13 | Executable_Memory | MEDIUM | T1620 | Reflective Code Loading | tracepoint/sys_enter_mprotect |
+| 14 | Core_Pattern_Modification | CRITICAL | T1611 | Escape to Host: core_pattern | tracepoint/sys_enter_openat + open |
+| 15 | Cgroup_Release_Agent | CRITICAL | T1611 | Escape to Host: cgroup release_agent | tracepoint/sys_enter_openat + open |
 
 ## Disabled by default
 

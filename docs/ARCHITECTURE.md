@@ -52,12 +52,12 @@ layout_test.go. A bump in EVENT_VERSION requires updating both sides.
 
 ## Kernel Programs (14 total)
 
-| Program | Hook | Action ID |
+| Program | Hook | Action IDs |
 |---------|------|-----------|
 | trace_unshare | kprobe/__x64_sys_unshare | 1 |
 | trace_pivot_root | kprobe/__x64_sys_pivot_root | 2 |
-| trace_openat | tracepoint/sys_enter_openat | 3 |
-| trace_open | tracepoint/sys_enter_open | 3 |
+| trace_openat | tracepoint/sys_enter_openat | 3, 14, 15 |
+| trace_open | tracepoint/sys_enter_open | 3, 14, 15 |
 | trace_execve | tracepoint/sys_enter_execve | 4 |
 | trace_connect | tracepoint/sys_enter_connect | 5 |
 | trace_ptrace | tracepoint/sys_enter_ptrace | 6 |

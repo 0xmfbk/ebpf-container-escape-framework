@@ -146,6 +146,68 @@ func emulateExecutableMemory() {
 	_ = unix.Munmap(b)
 }
 
+// emulateCorePatternModification opens the three kernel helper hijack
+// paths. Read-only opens are sufficient: sys_enter_openat fires before
+// path resolution, so the tracepoint triggers regardless of EACCES/ENOENT.
+// Writing is deliberately avoided so running this on a shared host as
+// root cannot modify kernel state.
+func emulateCorePatternModification() {
+	log.Println("[*] Emulating Core Pattern Modification (open /proc/sys/kernel/{core_pattern,modprobe,uevent_helper})...")
+	opened := 0
+	for _, p := range []string{
+		"/proc/sys/kernel/core_pattern",
+		"/proc/sys/kernel/modprobe",
+		"/proc/sys/kernel/uevent_helper",
+	} {
+		f, err := os.Open(p)
+		if err != nil {
+			log.Printf("[-] Expected open failure on %s (syscall still fired): %v", p, err)
+			continue
+		}
+		_ = f.Close()
+		opened++
+	}
+	log.Printf("[+] Core pattern emulation: %d/3 opens succeeded (all syscalls fired)", opened)
+}
+
+// emulateCgroupReleaseAgent opens release_agent / notify_on_release at
+// the cgroup root and one level down (covers cgroup v1 hierarchies and
+// delegated v2 subtrees). On cgroup v2 hosts the files do not exist and
+// every open returns ENOENT — the tracepoint fires anyway, which is what
+// the sensor detects.
+func emulateCgroupReleaseAgent() {
+	log.Println("[*] Emulating cgroup release_agent access...")
+	candidates := []string{
+		"/sys/fs/cgroup/release_agent",
+		"/sys/fs/cgroup/notify_on_release",
+	}
+	if entries, err := os.ReadDir("/sys/fs/cgroup"); err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				base := "/sys/fs/cgroup/" + e.Name()
+				candidates = append(candidates,
+					base+"/release_agent",
+					base+"/notify_on_release",
+				)
+			}
+		}
+	}
+	opened := 0
+	for _, p := range candidates {
+		f, err := os.Open(p)
+		if err != nil {
+			continue // ENOENT is expected on cgroup v2; tracepoint already fired
+		}
+		_ = f.Close()
+		opened++
+	}
+	if opened == 0 {
+		log.Printf("[-] No release_agent/notify_on_release files opened (expected on cgroup v2 hosts); syscalls still fired")
+	} else {
+		log.Printf("[+] cgroup release_agent emulation: %d/%d opens succeeded", opened, len(candidates))
+	}
+}
+
 func main() {
 	fmt.Println("=== Starting Adversary Emulation Engine ===")
 	emulateNamespaceEscape()
@@ -161,5 +223,7 @@ func main() {
 	emulateNamespaceSwitch()
 	emulateChrootEscape()
 	emulateExecutableMemory()
+	emulateCorePatternModification()
+	emulateCgroupReleaseAgent()
 	fmt.Println("=== Emulation Completed Successfully ===")
 }

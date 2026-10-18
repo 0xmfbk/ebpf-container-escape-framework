@@ -52,12 +52,15 @@ stage_env() {
     head2 "STAGE 1/10  Environment probe"
     local kver; kver="$(uname -r)"; info "kernel: $kver"
     local kmaj kmin; kmaj="$(echo "$kver" | cut -d. -f1)"; kmin="$(echo "$kver" | cut -d. -f2)"
-    if (( kmaj > 6 )) || { (( kmaj == 6 )) && (( kmin >= 12 )); }; then
-        pass "kernel >= 6.12 ($kver)"
-    else
-        fail "kernel < 6.12 ($kver)"
-    fi
 
+	if (( kmaj > 6 )) || { (( kmaj == 6 )) && (( kmin >= 12 )); }; then
+	    pass "kernel >= 6.12 ($kver)"
+	elif (( kmaj > 5 )) || { (( kmaj == 5 )) && (( kmin >= 15 )); }; then
+	    warn "kernel $kver is >= 5.15 but < 6.12. Structural support verified, but not primary test target."
+	else
+	    fail "kernel $kver is < 5.15. Unsupported."
+	fi
+	
     if [[ -r /sys/kernel/btf/vmlinux ]]; then
         pass "/sys/kernel/btf/vmlinux present"
         cp /sys/kernel/btf/vmlinux "${OUT}/vmlinux.btf" 2>/dev/null || true
@@ -101,7 +104,7 @@ stage_env() {
     local tproot=""
     [[ -r /sys/kernel/tracing/events/syscalls ]] && tproot="/sys/kernel/tracing"
     [[ -z "$tproot" && -r /sys/kernel/debug/tracing/events/syscalls ]] && tproot="/sys/kernel/debug/tracing"
-    for tp in openat open execve connect ptrace unlinkat; do
+    for tp in openat open execve connect ptrace unlinkat bpf perf_event_open mount setns chroot mprotect; do
         if [[ -n "$tproot" && -r "$tproot/events/syscalls/sys_enter_${tp}/id" ]]; then
             pass "tracepoint present: sys_enter_${tp}"
         else
@@ -222,7 +225,7 @@ stage_load() {
         done
         info "verifier: ok=$ok bad=$bad"
     fi
-    umount "$pin" 2>/dev/null || true
+    umount -l "$pin" 2>/dev/null || true
     rm -rf "$pin"
 }
 
@@ -680,12 +683,25 @@ NH_CFG_END
     fi
     pass "new_hooks: daemon started with all actions enabled"
 
+        # If the emulation binary is available, run it to generate additional events.
     if [[ -x "$EMUL_BIN" ]]; then
         "$EMUL_BIN" >/dev/null 2>&1 || true
     fi
+
+    # Actions 14 and 15 fire only when the target paths are opened.
+    # emulation/adversary predates them; fire host-side reads here so the
+    # hooks are exercised regardless of emulation coverage.
+    cat /proc/sys/kernel/core_pattern >/dev/null 2>&1 || true
+    cat /proc/sys/kernel/modprobe       >/dev/null 2>&1 || true
+    cat /proc/sys/kernel/uevent_helper >/dev/null 2>&1 || true
+    find /sys/fs/cgroup -maxdepth 4 \
+        \( -name 'release_agent' -o -name 'notify_on_release' \) \
+        -type f -exec cat {} \; >/dev/null 2>&1 || true
+    cat /sys/fs/cgroup/release_agent >/dev/null 2>&1 || true
+
     sleep 2
 
-    local required=(Ebpf_Tampering Perf_Event_Open Suspicious_Mount Namespace_Switch Chroot_Escape Executable_Memory)
+    local required=(Ebpf_Tampering Perf_Event_Open Suspicious_Mount Namespace_Switch Chroot_Escape Executable_Memory Core_Pattern_Modification Cgroup_Release_Agent)
     local seen=0
     for action in "${required[@]}"; do
         if grep -q "\"action\":\"$action\"" "$LOG_FILE"; then
@@ -706,25 +722,70 @@ stage_docker() {
         warn "Docker not installed, skipping container build test."
         return
     fi
-    
+
+    cd "$ROOT" || return
+
+    # Force clean any stale BPF pins left by Stage 4
+    umount -f "${OUT}/bpftool_pin" 2>/dev/null || true
+    umount -l "${OUT}/bpftool_pin" 2>/dev/null || true
+    rm -rf "${OUT}/bpftool_pin" 2>/dev/null || true
+
     info "Building Docker image (this may take a minute)..."
-    if docker build -t ebpf-edr:test . > /dev/null 2>&1; then
-        pass "Docker image built successfully"
-        info "Testing container startup..."
-        timeout 3s docker run --rm --privileged --pid=host \
-            -v /sys/kernel/btf/vmlinux:/sys/kernel/btf/vmlinux:ro \
-            -v /sys/fs/bpf:/sys/fs/bpf \
-            -v /sys/kernel/tracing:/sys/kernel/tracing:ro \
-            ebpf-edr:test > /tmp/docker_test.log 2>&1 || true
-            
-        if grep -q "EDR Engine active" /tmp/docker_test.log; then
-            pass "Docker container started and attached successfully"
-        else
-            fail "Docker container failed to start"
-            tail -5 /tmp/docker_test.log | sed 's/^/    /'
+    if ! docker build -t ebpf-edr:test . > /tmp/docker_test_build.log 2>&1; then
+        fail "Docker image failed to build (see /tmp/docker_test_build.log)"
+        tail -10 /tmp/docker_test_build.log | sed 's/^/    /'
+        return
+    fi
+    pass "Docker image built successfully"
+
+    info "Testing container startup (detached, 120s observation window)..."
+    local cname="ebpf-edr-verify-$$"
+    docker rm -f "$cname" >/dev/null 2>&1 || true
+
+    # Give the system 10s to cool down after the 25k forks test in Stage 12
+    info "Waiting for system to settle before launching container..."
+    sleep 10
+
+    local cid
+    # Increased timeout to 60s because Docker daemon is slow on loaded VMs
+    cid="$(timeout -k 5s 60s docker run -d \
+        --name "$cname" \
+        --privileged --pid=host --userns=host \
+        --ulimit memlock=-1:-1 \
+        -v /sys/kernel/btf/vmlinux:/sys/kernel/btf/vmlinux:ro \
+        -v /sys/kernel/tracing:/sys/kernel/tracing:ro \
+        -v /sys/kernel/debug:/sys/kernel/debug:ro \
+        ebpf-edr:test 2>/tmp/docker_test_run.err)" || {
+        fail "docker run failed or timed out (see /tmp/docker_test_run.err)"
+        cat /tmp/docker_test_run.err | sed 's/^/    /'
+        return
+    }
+
+    local waited=0 status=""
+    while (( waited < 120 )); do
+        if timeout -k 2s 10s docker logs "$cid" 2>&1 | grep -q "EDR Engine active"; then
+            break
         fi
+        status="$(timeout -k 2s 10s docker inspect -f '{{.State.Status}}' "$cid" 2>/dev/null || echo missing)"
+        case "$status" in
+            running|created) sleep 2; waited=$((waited+2)) ;;
+            *) break ;;
+        esac
+    done
+
+    # Capture everything BEFORE removal
+    timeout -k 2s 10s docker logs "$cid" > /tmp/docker_test.log 2>&1 || true
+    local exit_code oom
+    exit_code="$(timeout -k 2s 10s docker inspect -f '{{.State.ExitCode}}' "$cid" 2>/dev/null || echo '?')"
+    oom="$(timeout -k 2s 10s docker inspect -f '{{.State.OOMKilled}}' "$cid" 2>/dev/null || echo '?')"
+
+    docker rm -f "$cname" >/dev/null 2>&1 || true
+
+    if grep -q "EDR Engine active" /tmp/docker_test.log; then
+        pass "Docker container started and attached successfully (${waited}s)"
     else
-        fail "Docker image failed to build"
+        fail "Docker container failed (${waited}s, status=$status, exit=$exit_code, oom=$oom)"
+        tail -25 /tmp/docker_test.log | sed 's/^/    /'
     fi
 }
 

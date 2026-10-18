@@ -20,7 +20,8 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
-            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+            privileged: true
+            readOnlyRootFilesystem: true
           volumeMounts:
             - name: config
               mountPath: /etc/ebpf-edr
@@ -32,8 +33,6 @@ spec:
             - name: proc
               mountPath: /host/proc
               readOnly: true
-            - name: varlog
-              mountPath: /var/log
             - name: tracefs
               mountPath: /sys/kernel/tracing
               readOnly: true
@@ -55,8 +54,6 @@ spec:
           hostPath:
             path: /proc
             type: Directory
-        - name: varlog
-          emptyDir: {}
         - name: tracefs
           hostPath:
             path: /sys/kernel/tracing

@@ -36,9 +36,16 @@ help:
 
 $(VMLINUX_H):
 	@if [ ! -f $@ ]; then \
-		echo "[make] generating $@"; \
-		$(BPFTOOL) btf dump file /sys/kernel/btf/vmlinux format c > $@; \
+		echo "[make] ERROR: $@ is missing."; \
+		echo "        vmlinux.h must be pinned to a 5.15-compatible baseline to prevent struct drift."; \
+		echo "        To generate it from the current host, run: make vmlinux-refresh"; \
+		exit 1; \
 	fi
+
+vmlinux-refresh:
+	@echo "[make] WARNING: Regenerating $@ from host BTF (/sys/kernel/btf/vmlinux)."
+	@echo "[make] This sets your compatibility floor to $(uname -r)."
+	$(BPFTOOL) btf dump file /sys/kernel/btf/vmlinux format c > $(VMLINUX_H)
 
 kernel: $(BPF_OBJ) $(LAYOUT_BIN)
 

@@ -1,4 +1,5 @@
 #!/bin/bash
+cd "$(dirname "$0")" || exit 1
 echo "=== Running Reproducible Attack Suite ==="
 for dir in scenarios/*/; do
     if [ -x "${dir}run.sh" ]; then

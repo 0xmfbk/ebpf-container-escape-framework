@@ -23,7 +23,9 @@ enum event_action {
     ACTION_NAMESPACE_SWITCH            = 11,
     ACTION_CHROOT_ESCAPE               = 12,
     ACTION_EXECUTABLE_MEMORY           = 13,
-    ACTION__MAX                        = 14,
+    ACTION_CORE_PATTERN_MODIFICATION   = 14,
+    ACTION_CGROUP_RELEASE_AGENT        = 15,
+    ACTION__MAX                        = 16,
 };
 
 /* Event flags (bitfield in event_t.flags). */

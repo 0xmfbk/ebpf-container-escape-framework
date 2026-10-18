@@ -1,16 +1,22 @@
-# eBPF Container Escape & Runtime Threat Detection Framework
+# eBPF Container Escape Detection & Runtime Audit EDR
 
 <p align="center">
   <img src="docs/demo.gif" alt="Demo" width="800">
 </p>
+
+> **Detection & audit only. Non enforcing sensor.**
+> No BPF program returns `-EPERM`; no syscall is blocked. This agent is a
+> runtime observation plane, not a prevention plane. See
+> [`docs/SECURITY.md`](docs/SECURITY.md#audit-only-mode) and
+> [`THREAT_MODEL.md`](THREAT_MODEL.md).
 
 An audit only Linux EDR agent built with eBPF (kernel side, C) and a
 high efficiency Go daemon (user space). Targets Debian 13 / kernel 6.12+
 with BTF enabled. Emits structured JSON with full process lineage and
 cgroup context, backed by a zero allocation pipeline and bounded caches.
 
-**Status:** Phase 2.6 complete. 13 MITRE ATT&CK techniques covered.
-Verified end to end on kernel 6.12.111.
+**Status:** Phase 2.6 complete. 13 MITRE ATT&CK techniques across 15 actions.
+Verified end to end on kernel 6.12.111, with structural support for Linux 5.15 LTS.
 
 ## Coverage
 
@@ -29,6 +35,8 @@ Verified end to end on kernel 6.12.111.
 | 11 | Namespace_Switch | HIGH | T1611 | tracepoint/sys_enter_setns |
 | 12 | Chroot_Escape | HIGH | T1611 | tracepoint/sys_enter_chroot |
 | 13 | Executable_Memory | MEDIUM | T1620 | tracepoint/sys_enter_mprotect |
+| 14 | Core_Pattern_Modification | CRITICAL | T1611 | tracepoint/sys_enter_openat + open |
+| 15 | Cgroup_Release_Agent | CRITICAL | T1611 | tracepoint/sys_enter_openat + open |
 
 Actions 9 and 13 are attached but kernel side suppressed by default via
 `disabled_actions` in `config.toml`.
@@ -68,8 +76,8 @@ Absent `[output]`, behavior is byte identical to v1.x.
 
 ## Requirements
 
-- Debian 13 (Trixie) or equivalent modern Linux
-- Kernel >= 6.12 with `CONFIG_DEBUG_INFO_BTF=y` (`/sys/kernel/btf/vmlinux`)
+- Linux Kernel >= 5.15 LTS with `CONFIG_DEBUG_INFO_BTF=y` (`/sys/kernel/btf/vmlinux`)
+- Tested on Debian 13 (Kernel 6.12). See `docs/KERNEL_COMPATIBILITY.md` for the full matrix.
 - clang, gcc, Go >= 1.21, bpftool, libbpf headers
 - Root with `CAP_BPF CAP_PERFMON CAP_SYS_ADMIN`
 
@@ -191,11 +199,15 @@ Targets: `dropped` = 0, `ver_mismatch` = 0, `lineage_cache` under capacity.
 
 ## Documentation
 
-- `docs/ARCHITECTURE.md` - data flow, kernel programs, caches, versioning
-- `docs/OPERATIONS.md` - install, config, reload, troubleshooting
-- `docs/MITRE_MATRIX.md` - full technique mapping with hook names
-- `docs/SECURITY.md` - threat model, capabilities, sandbox, failure modes
-- `docs/SIEM_INTEGRATION.md` - Splunk, Elastic, Sentinel, QRadar recipes
+- `docs/ARCHITECTURE.md` - data flow, kernel programs, caches, versioning.
+- `docs/OPERATIONS.md` - install, config, reload, troubleshooting.
+- `docs/MITRE_MATRIX.md` - full technique mapping with hook names.
+- `docs/SECURITY.md` - threat model, capabilities, sandbox, failure modes.
+- `docs/SIEM_INTEGRATION.md` - Splunk, Elastic, Sentinel, QRadar recipes.
+- `SECURITY.md` - vulnerability disclosure policy and supported versions.
+- `CONTRIBUTING.md` - contribution workflow and local CI gate.
+- `CODE_OF_CONDUCT.md` - community standards.
+- `docs/KERNEL_COMPATIBILITY.md` - kernel floor (5.15 LTS), feature matrix, and vmlinux.h pinning policy.
 
 ## Verification evidence
 

@@ -112,9 +112,43 @@ static __always_inline int is_shadow_path(const char *p)
     return MATCH_STR(p, "/etc/shadow");
 }
 
-static __always_inline int is_docker_sock_path(const char *p)
+/* Container runtime control sockets. Prefix match via MATCH_STR; the
+ * prefix form catches bind mounts at these canonical paths. */
+static __always_inline int is_container_runtime_socket_path(const char *p)
 {
-    return MATCH_STR(p, "/var/run/docker.sock");
+    return MATCH_STR(p, "/var/run/docker.sock")
+        || MATCH_STR(p, "/run/docker.sock")
+        || MATCH_STR(p, "/var/run/containerd/containerd.sock")
+        || MATCH_STR(p, "/run/containerd/containerd.sock")
+        || MATCH_STR(p, "/var/run/crio/crio.sock")
+        || MATCH_STR(p, "/run/crio/crio.sock")
+        || MATCH_STR(p, "/run/k3s/containerd/containerd.sock");
+}
+
+/* Kernel-invoked user-space helper hijack vectors: writing to any of
+ * these causes the kernel to exec an attacker-chosen binary on the host. */
+static __always_inline int is_kernel_helper_path(const char *p)
+{
+    return MATCH_STR(p, "/proc/sys/kernel/core_pattern")
+        || MATCH_STR(p, "/proc/sys/kernel/modprobe")
+        || MATCH_STR(p, "/proc/sys/kernel/uevent_helper");
+}
+
+/* cgroup release_agent / notify_on_release. Paths are variable (one per
+ * subsystem on cgroup v1); we cover the root and the most common cgroup
+ * v1 hierarchies. On cgroup v2 (kernel 6.12 / Debian 13 default) these
+ * files do not exist, so additional patterns would be dead weight. See
+ * docs/DETECTION_COVERAGE.md for the coverage note. */
+static __always_inline int is_cgroup_release_agent_path(const char *p)
+{
+    return MATCH_STR(p, "/sys/fs/cgroup/release_agent")
+        || MATCH_STR(p, "/sys/fs/cgroup/notify_on_release")
+        || MATCH_STR(p, "/sys/fs/cgroup/memory/release_agent")
+        || MATCH_STR(p, "/sys/fs/cgroup/memory/notify_on_release")
+        || MATCH_STR(p, "/sys/fs/cgroup/cpu,cpuacct/release_agent")
+        || MATCH_STR(p, "/sys/fs/cgroup/cpu,cpuacct/notify_on_release")
+        || MATCH_STR(p, "/sys/fs/cgroup/pids/release_agent")
+        || MATCH_STR(p, "/sys/fs/cgroup/pids/notify_on_release");
 }
 
 /* ================== Container escape ================== */
@@ -162,13 +196,21 @@ int trace_openat(struct trace_event_raw_sys_enter_openat *ctx)
     char path[MAX_FILENAME_LEN] = {};
     if (bpf_probe_read_user_str(path, sizeof(path), ctx->filename) < 0)
         return 0;
-    if (!is_shadow_path(path) && !is_docker_sock_path(path))
+
+    __u32 action = 0;
+    if (is_shadow_path(path) || is_container_runtime_socket_path(path))
+        action = ACTION_SENSITIVE_FILE_ACCESS;
+    else if (is_kernel_helper_path(path))
+        action = ACTION_CORE_PATTERN_MODIFICATION;
+    else if (is_cgroup_release_agent_path(path))
+        action = ACTION_CGROUP_RELEASE_AGENT;
+    if (!action)
         return 0;
 
-    struct event_t *e = event_alloc(ACTION_SENSITIVE_FILE_ACCESS);
+    struct event_t *e = event_alloc(action);
     if (!e) return 0;
     event_fill_common(e);
-    e->action_id = ACTION_SENSITIVE_FILE_ACCESS;
+    e->action_id = action;
     __builtin_memcpy(e->filename, path, sizeof(e->filename));
     bpf_ringbuf_submit(e, 0);
     return 0;
@@ -191,13 +233,21 @@ int trace_open(struct trace_event_raw_sys_enter_open *ctx)
     char path[MAX_FILENAME_LEN] = {};
     if (bpf_probe_read_user_str(path, sizeof(path), ctx->filename) < 0)
         return 0;
-    if (!is_shadow_path(path) && !is_docker_sock_path(path))
+
+    __u32 action = 0;
+    if (is_shadow_path(path) || is_container_runtime_socket_path(path))
+        action = ACTION_SENSITIVE_FILE_ACCESS;
+    else if (is_kernel_helper_path(path))
+        action = ACTION_CORE_PATTERN_MODIFICATION;
+    else if (is_cgroup_release_agent_path(path))
+        action = ACTION_CGROUP_RELEASE_AGENT;
+    if (!action)
         return 0;
 
-    struct event_t *e = event_alloc(ACTION_SENSITIVE_FILE_ACCESS);
+    struct event_t *e = event_alloc(action);
     if (!e) return 0;
     event_fill_common(e);
-    e->action_id = ACTION_SENSITIVE_FILE_ACCESS;
+    e->action_id = action;
     __builtin_memcpy(e->filename, path, sizeof(e->filename));
     bpf_ringbuf_submit(e, 0);
     return 0;

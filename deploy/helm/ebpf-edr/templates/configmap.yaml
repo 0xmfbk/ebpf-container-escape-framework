@@ -5,15 +5,16 @@ metadata:
   namespace: {{ .Release.Namespace }}
 data:
   config.toml: |
-    mode = "{{ .Values.config.mode }}"
+    mode = {{ .Values.config.mode | quote }}
+    disabled_actions = ["Perf_Event_Open", "Executable_Memory"]
     [log]
     level = "info"
     [output]
-    format = "{{ .Values.config.output.format }}"
-    target = "{{ .Values.config.output.target }}"
+    format = {{ .Values.config.output.format | quote }}
+    target = {{ .Values.config.output.target | quote }}
     {{- if eq .Values.config.output.target "webhook" }}
     [output.webhook]
-    url = "{{ .Values.config.output.webhook_url }}"
-    auth_header = "{{ .Values.config.output.webhook_token }}"
+    url = {{ .Values.config.output.webhook_url | quote }}
+    auth_header = {{ .Values.config.output.webhook_token | quote }}
     batch_size = 100
     {{- end }}

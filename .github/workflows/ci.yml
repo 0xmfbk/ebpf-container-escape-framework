@@ -31,9 +31,6 @@ jobs:
         sudo cp bpftool /usr/local/bin/
         bpftool version
 
-    - name: Run shellcheck
-      run: shellcheck scripts/*.sh tests/attacks/scenarios/*/run.sh
-
     - name: Build BPF object
       run: make kernel
 

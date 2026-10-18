@@ -1,124 +1,20 @@
-# Operations
+### False-positive tuning: Actions 14 and 15
 
-## Install
+`Core_Pattern_Modification` (14) will fire on reads of
+`/proc/sys/kernel/{core_pattern,modprobe,uevent_helper}` by `systemd`,
+`systemd-sysctl`, `sysctl`, and container runtime setup paths. If this
+noise is unacceptable, add the offending comms to `filter.comm_allowlist`:
 
-    sudo ./install.sh              # prefix /usr/local
-    sudo ./install.sh --dry-run    # print actions, do nothing
-    sudo ./install.sh --uninstall  # remove everything except config
+    [filter]
+    comm_allowlist = ["systemd-sysctl", "sysctl"]
 
-Created by install:
+`Cgroup_Release_Agent` (15) fires on `release_agent` and
+`notify_on_release` accesses under `/sys/fs/cgroup/`. On cgroup v1 hosts,
+`notify_on_release` is written by `systemd` and runtime tooling as part
+of normal lifecycle consider allowlisting `systemd` and `systemd-logind`
+if the volume is high. On cgroup v2 hosts (kernel 6.12 default) these
+files typically do not exist, and the sensor fires only on attacker
+attempts, which resolve to ENOENT.
 
-- /usr/local/sbin/ebpf-edr - binary
-- /usr/local/lib/ebpf-edr/bpf_program.o - BPF object
-- /etc/ebpf-edr/config.toml - config (existing preserved; new default at .new)
-- /etc/systemd/system/ebpf-edr.service - hardened unit
-- /etc/logrotate.d/ebpf-edr - rotation policy
-
-## Config reload
-
-    sudo systemctl reload ebpf-edr
-    # or
-    sudo kill -HUP $(pgrep ebpf-edr)
-
-Reloadable: log.level, rates.*, filter.*, disabled_actions.
-Requires restart: log.path, log.max_bytes, context.*, container.cache_max_entries, output.*.
-
-## Verification Commands
-
-| Command | Purpose |
-|---------|---------|
-| `sudo -E make verify` | Runs 15 stage core verifier + 2 stage SIEM verifier |
-| `make verify-siem` | Runs only the SIEM format matrix and webhook tests |
-| `make ci` | Runs gofmt, vet, race, fuzz, and all verifiers |
-
-## Health log
-
-Every 60s (configurable via --health-interval), the daemon writes a single
-line containing recv, written, dropped, rate_limited, parse_err,
-ver_mismatch, ringbuf_err, reloads, reload_fail, chan, lineage_cache,
-lineage_hits, lineage_misses, cgroup_cache, sink_sent, sink_failed,
-sink_dropped, sink_retries, sink_queue, sink_circuit.
-
-Watch for:
-
-- dropped and rate_limited near zero in steady state
-- ver_mismatch always zero (nonzero means C and Go struct drift)
-- lineage_cache staying below capacity
-- sink_dropped climbing (SIEM is down or too slow)
-- sink_circuit=true (SIEM was unreachable; daemon is protecting itself)
-
-## Troubleshooting
-
-Service will not start, condition failed: BTF missing at
-/sys/kernel/btf/vmlinux, or BPF object missing at the unit's expected path.
-
-Startup over 5s: the kernel verifier runs each of the 14 programs. First
-boot can take seconds; subsequent starts are faster.
-
-High idle CPU: check journalctl -u ebpf-edr and look for the health line.
-If recv is high while the system is idle, a chatty action is firing. Add
-it to disabled_actions in config.toml, then systemctl reload ebpf-edr.
-
-## High-Density Kubernetes Tuning
-
-In large Kubernetes clusters, the control plane components (like `kubelet` and `containerd`) generate a massive amount of benign process execution events. To prevent log spam and reduce SIEM costs, you should drop these at the kernel level using `comm_allowlist`.
-
-Add this to your `config.toml`:
-
-```toml
-[filter]
-comm_allowlist = [
-    "kubelet",
-    "kube-proxy",
-    "containerd",
-    "containerd-shim",
-    "runc",
-    "coredns"
-]
-```
-
-Because this filter is evaluated in the eBPF kernel program before the ringbuf reservation, it reduces CPU and memory usage to almost zero for these specific processes.
-
-## Configuration reference
-
-mode = "audit" is the only supported value in this build.
-
-[log]
-path        = "/var/log/ebpf_edr.json"
-max_bytes   = 52428800
-max_backups = 5
-level       = "info"
-
-[filter]
-comm_allowlist   = []
-cgroup_allowlist = []
-
-[rates]
-events_per_sec = 200
-burst          = 400
-
-[container]
-cache_max_entries = 5000
-
-[context]
-lineage_max_depth  = 16
-lineage_cache_size = 20000
-cgroup_cache_size  = 5000
-
-disabled_actions = []
-
-[output]
-format = "json"      # json | ecs | ocsf | cef | leef
-target = "file"      # file | stdout | syslog | webhook
-path   = "/var/log/ebpf_edr.json"
-
-[output.syslog]
-network = "udp"
-address = "siem.internal:514"
-tag     = "ebpf-edr"
-
-[output.webhook]
-url         = ""
-auth_header = ""
-splunk_hec  = false
-batch_size  = 100
+**Do not disable actions 14 or 15 entirely.** The signal is in the
+open syscall itself, not the write.

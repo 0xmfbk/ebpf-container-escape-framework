@@ -33,8 +33,6 @@ coverage.html
 .idea/
 .vscode/
 
-# Generated BTF dump (recreated by 'make kernel' from /sys/kernel/btf/vmlinux)
-kernel/vmlinux.h
 
 # BTF dumps produced by verify
 *.btf

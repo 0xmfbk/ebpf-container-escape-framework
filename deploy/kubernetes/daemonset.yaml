@@ -21,7 +21,8 @@ spec:
           image: 0xmfbk/ebpf-container-escape-framework:v2.7.0
           imagePullPolicy: IfNotPresent
           securityContext:
-            privileged: true      # REQUIRED: for CAP_BPF, CAP_PERFMON, CAP_SYS_ADMIN
+            privileged: true
+            readOnlyRootFilesystem: true
           volumeMounts:
             - name: config
               mountPath: /etc/ebpf-edr

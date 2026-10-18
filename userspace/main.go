@@ -24,7 +24,7 @@ const (
 	eventWords        = eventSize / 8
 	eventVersion      = 3
 	defaultHealthTick = 60 * time.Second
-	ActionMaxID       = 14
+	ActionMaxID       = 16
 )
 
 /* Action IDs - must match enum event_action in common.h */
@@ -43,6 +43,8 @@ const (
 	ActionNamespaceSwitch           = 11
 	ActionChrootEscape              = 12
 	ActionExecutableMemory          = 13
+	ActionCorePatternModification   = 14
+	ActionCgroupReleaseAgent        = 15
 )
 
 var actionNames = map[uint32]string{
@@ -59,6 +61,8 @@ var actionNames = map[uint32]string{
 	ActionNamespaceSwitch:           "Namespace_Switch",
 	ActionChrootEscape:              "Chroot_Escape",
 	ActionExecutableMemory:          "Executable_Memory",
+	ActionCorePatternModification:   "Core_Pattern_Modification",
+	ActionCgroupReleaseAgent:        "Cgroup_Release_Agent",
 }
 
 type event_t struct {
@@ -145,6 +149,10 @@ func calculateSeverity(action, command, target string, destPort uint16) (string,
 		return "HIGH", "T1611", "Escape to Host: chroot"
 	case "Executable_Memory":
 		return "MEDIUM", "T1620", "Reflective Code Loading"
+	case "Core_Pattern_Modification":
+		return "CRITICAL", "T1611", "Escape to Host: core_pattern"
+	case "Cgroup_Release_Agent":
+		return "CRITICAL", "T1611", "Escape to Host: cgroup release_agent"
 	default:
 		return "INFO", "T1204", "User Execution"
 	}
@@ -527,7 +535,8 @@ func main() {
 			var target, destIPStr string
 			switch action {
 			case "Sensitive_File_Access", "Process_Execution", "Log_Tampering",
-				"Suspicious_Mount", "Chroot_Escape":
+				"Suspicious_Mount", "Chroot_Escape",
+				"Core_Pattern_Modification", "Cgroup_Release_Agent":
 				target = filename
 			case "Network_Connection":
 				destIPStr = formatIPv4(ev.DestIP)
