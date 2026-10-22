@@ -3,7 +3,7 @@ clear
 echo -e "\033[1;36m=== 1. Starting eBPF EDR Daemon (Audit-Only) ===\033[0m"
 sleep 1
 
-# Create the config
+# Create the config #
 cat <<CONF > /tmp/demo_config.toml
 mode = "audit"
 [filter]
