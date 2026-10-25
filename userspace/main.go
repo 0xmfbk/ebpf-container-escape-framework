@@ -396,33 +396,6 @@ func main() {
 		log.Fatalf("load spec: %v", err)
 	}
 
-	var objs struct {
-		ProgUnshare   *ebpf.Program `ebpf:"trace_unshare"`
-		ProgPivotRoot *ebpf.Program `ebpf:"trace_pivot_root"`
-		ProgOpenat    *ebpf.Program `ebpf:"trace_openat"`
-		ProgOpen      *ebpf.Program `ebpf:"trace_open"`
-		ProgOpenat2   *ebpf.Program `ebpf:"trace_openat2"`
-		ProgExecve    *ebpf.Program `ebpf:"trace_execve"`
-		ProgConnect   *ebpf.Program `ebpf:"trace_connect"`
-		ProgPtrace    *ebpf.Program `ebpf:"trace_ptrace"`
-		ProgUnlinkat  *ebpf.Program `ebpf:"trace_unlinkat"`
-		ProgBPF       *ebpf.Program `ebpf:"trace_bpf"`
-		ProgPerf      *ebpf.Program `ebpf:"trace_perf_event_open"`
-		ProgMount     *ebpf.Program `ebpf:"trace_mount"`
-		ProgSetns     *ebpf.Program `ebpf:"trace_setns"`
-		ProgChroot    *ebpf.Program `ebpf:"trace_chroot"`
-		ProgMprotect  *ebpf.Program `ebpf:"trace_mprotect"`
-		Events        *ebpf.Map     `ebpf:"events"`
-		CommAllow     *ebpf.Map     `ebpf:"comm_allowlist"`
-		CgAllow       *ebpf.Map     `ebpf:"cgroup_allowlist"`
-		ActionEnabled *ebpf.Map     `ebpf:"action_enabled"`
-		CanaryPaths   *ebpf.Map     `ebpf:"canary_paths"`
-		SelfTgid      *ebpf.Map     `ebpf:"self_tgid"`
-		FileHookLsm   *ebpf.Map     `ebpf:"file_hook_lsm"`
-		// Catch-all: receives every loaded program, including the
-		// optional lsm_file_open on kernels where it is supported.
-		Programs map[string]*ebpf.Program
-	}
 	// BPF LSM availability: the lsm/file_open program is deleted from
 	// the spec before load when the kernel's active LSM list lacks bpf,
 	// and deleted + reloaded once if the verifier still rejects it. The
@@ -435,39 +408,106 @@ func main() {
 		log.Printf("[-] BPF LSM not active on this kernel; file rules run on open/openat/openat2 tracepoints")
 		delete(spec.Programs, "lsm_file_open")
 	}
-	if err := spec.LoadAndAssign(&objs, nil); err != nil {
+	coll, err := ebpf.NewCollection(spec)
+	if err != nil {
 		if !lsmSupported {
-			log.Fatalf("load objects: %v", err)
+			log.Fatalf("load collection: %v", err)
 		}
 		// Kernel lists bpf in its LSMs but rejected the program (e.g.
 		// bpf_d_path restrictions): drop it and keep the tracepoints.
 		delete(spec.Programs, "lsm_file_open")
 		log.Printf("[-] lsm/file_open not loadable (%v); keeping tracepoint file hooks", err)
-		if err := spec.LoadAndAssign(&objs, nil); err != nil {
-			log.Fatalf("load objects: %v", err)
+		coll, err = ebpf.NewCollection(spec)
+		if err != nil {
+			log.Fatalf("load collection: %v", err)
 		}
 	}
-	defer objs.ProgUnshare.Close()
-	defer objs.ProgPivotRoot.Close()
-	defer objs.ProgOpenat.Close()
-	defer objs.ProgOpen.Close()
-	defer objs.ProgOpenat2.Close()
-	defer objs.ProgExecve.Close()
-	defer objs.ProgConnect.Close()
-	defer objs.ProgPtrace.Close()
-	defer objs.ProgUnlinkat.Close()
-	defer objs.ProgBPF.Close()
-	defer objs.ProgPerf.Close()
-	defer objs.ProgMount.Close()
-	defer objs.ProgSetns.Close()
-	defer objs.ProgChroot.Close()
-	defer objs.ProgMprotect.Close()
-	defer objs.Events.Close()
-	defer objs.CommAllow.Close()
-	defer objs.CgAllow.Close()
-	defer objs.ActionEnabled.Close()
-	defer objs.CanaryPaths.Close()
-	defer objs.SelfTgid.Close()
+	// Collection.Close closes every program and map we hand out below.
+	defer coll.Close()
+
+	// Explicit assignment from the collection: cilium/ebpf's
+	// LoadAndAssign has no catch-all for programs not bound to a struct
+	// field, and a named field for the optional LSM program would hard
+	// fail with "missing program" on kernels where we deleted it.
+	mustProg := func(name string) *ebpf.Program {
+		p := coll.Programs[name]
+		if p == nil {
+			log.Fatalf("internal: program %q missing from collection", name)
+		}
+		return p
+	}
+	mustMap := func(name string) *ebpf.Map {
+		m := coll.Maps[name]
+		if m == nil {
+			log.Fatalf("internal: map %q missing from collection", name)
+		}
+		return m
+	}
+
+	var objs struct {
+		ProgUnshare   *ebpf.Program
+		ProgPivotRoot *ebpf.Program
+		ProgOpenat    *ebpf.Program
+		ProgOpen      *ebpf.Program
+		ProgOpenat2   *ebpf.Program
+		ProgExecve    *ebpf.Program
+		ProgConnect   *ebpf.Program
+		ProgPtrace    *ebpf.Program
+		ProgUnlinkat  *ebpf.Program
+		ProgBPF       *ebpf.Program
+		ProgPerf      *ebpf.Program
+		ProgMount     *ebpf.Program
+		ProgSetns     *ebpf.Program
+		ProgChroot    *ebpf.Program
+		ProgMprotect  *ebpf.Program
+		ProgTruncate  *ebpf.Program
+		ProgRename    *ebpf.Program
+		ProgRenameat  *ebpf.Program
+		ProgRenameat2 *ebpf.Program
+		ProgMemfd     *ebpf.Program
+		ProgExecveat  *ebpf.Program
+		ProgInitMod   *ebpf.Program
+		ProgFinitMod  *ebpf.Program
+		Events        *ebpf.Map
+		CommAllow     *ebpf.Map
+		CgAllow       *ebpf.Map
+		ActionEnabled *ebpf.Map
+		CanaryPaths   *ebpf.Map
+		SelfTgid      *ebpf.Map
+		FileHookLsm   *ebpf.Map
+	}
+	objs.ProgUnshare = mustProg("trace_unshare")
+	objs.ProgPivotRoot = mustProg("trace_pivot_root")
+	objs.ProgOpenat = mustProg("trace_openat")
+	objs.ProgOpen = mustProg("trace_open")
+	objs.ProgOpenat2 = mustProg("trace_openat2")
+	objs.ProgExecve = mustProg("trace_execve")
+	objs.ProgConnect = mustProg("trace_connect")
+	objs.ProgPtrace = mustProg("trace_ptrace")
+	objs.ProgUnlinkat = mustProg("trace_unlinkat")
+	objs.ProgBPF = mustProg("trace_bpf")
+	objs.ProgPerf = mustProg("trace_perf_event_open")
+	objs.ProgMount = mustProg("trace_mount")
+	objs.ProgSetns = mustProg("trace_setns")
+	objs.ProgChroot = mustProg("trace_chroot")
+	objs.ProgMprotect = mustProg("trace_mprotect")
+	objs.ProgTruncate = mustProg("trace_truncate")
+	objs.ProgRename = mustProg("trace_rename")
+	objs.ProgRenameat = mustProg("trace_renameat")
+	objs.ProgRenameat2 = mustProg("trace_renameat2")
+	objs.ProgMemfd = mustProg("trace_memfd_create")
+	objs.ProgExecveat = mustProg("trace_execveat")
+	objs.ProgInitMod = mustProg("trace_init_module")
+	objs.ProgFinitMod = mustProg("trace_finit_module")
+	objs.Events = mustMap("events")
+	objs.CommAllow = mustMap("comm_allowlist")
+	objs.CgAllow = mustMap("cgroup_allowlist")
+	objs.ActionEnabled = mustMap("action_enabled")
+	objs.CanaryPaths = mustMap("canary_paths")
+	objs.SelfTgid = mustMap("self_tgid")
+	objs.FileHookLsm = mustMap("file_hook_lsm")
+	// Optional: nil when the LSM program was dropped for this kernel.
+	progLSM := coll.Programs["lsm_file_open"]
 
 	if err := populateFilterMaps(objs.CommAllow, objs.CgAllow, loaded); err != nil {
 		log.Fatalf("populate filter maps: %v", err)
@@ -519,35 +559,35 @@ func main() {
 		return
 	})
 	attach("truncate", func() (e error) {
-		tpTruncate, e = link.Tracepoint("syscalls", "sys_enter_truncate", objs.Programs["trace_truncate"], nil)
+		tpTruncate, e = link.Tracepoint("syscalls", "sys_enter_truncate", objs.ProgTruncate, nil)
 		return
 	})
 	attach("rename", func() (e error) {
-		tpRename, e = link.Tracepoint("syscalls", "sys_enter_rename", objs.Programs["trace_rename"], nil)
+		tpRename, e = link.Tracepoint("syscalls", "sys_enter_rename", objs.ProgRename, nil)
 		return
 	})
 	attach("renameat", func() (e error) {
-		tpRenameat, e = link.Tracepoint("syscalls", "sys_enter_renameat", objs.Programs["trace_renameat"], nil)
+		tpRenameat, e = link.Tracepoint("syscalls", "sys_enter_renameat", objs.ProgRenameat, nil)
 		return
 	})
 	attach("renameat2", func() (e error) {
-		tpRenameat2, e = link.Tracepoint("syscalls", "sys_enter_renameat2", objs.Programs["trace_renameat2"], nil)
+		tpRenameat2, e = link.Tracepoint("syscalls", "sys_enter_renameat2", objs.ProgRenameat2, nil)
 		return
 	})
 	attach("memfd_create", func() (e error) {
-		tpMemfd, e = link.Tracepoint("syscalls", "sys_enter_memfd_create", objs.Programs["trace_memfd_create"], nil)
+		tpMemfd, e = link.Tracepoint("syscalls", "sys_enter_memfd_create", objs.ProgMemfd, nil)
 		return
 	})
 	attach("execveat", func() (e error) {
-		tpExecveat, e = link.Tracepoint("syscalls", "sys_enter_execveat", objs.Programs["trace_execveat"], nil)
+		tpExecveat, e = link.Tracepoint("syscalls", "sys_enter_execveat", objs.ProgExecveat, nil)
 		return
 	})
 	attach("init_module", func() (e error) {
-		tpInitMod, e = link.Tracepoint("syscalls", "sys_enter_init_module", objs.Programs["trace_init_module"], nil)
+		tpInitMod, e = link.Tracepoint("syscalls", "sys_enter_init_module", objs.ProgInitMod, nil)
 		return
 	})
 	attach("finit_module", func() (e error) {
-		tpFinitMod, e = link.Tracepoint("syscalls", "sys_enter_finit_module", objs.Programs["trace_finit_module"], nil)
+		tpFinitMod, e = link.Tracepoint("syscalls", "sys_enter_finit_module", objs.ProgFinitMod, nil)
 		return
 	})
 	attach("execve", func() (e error) {
@@ -615,7 +655,7 @@ func main() {
 	// attach, flip file_hook_lsm so the open tracepoints go passive and
 	// each file event is emitted exactly once (from the LSM, after path
 	// resolution — io_uring-driven opens included).
-	if p := objs.Programs["lsm_file_open"]; p != nil {
+	if p := progLSM; p != nil {
 		if lk, err := link.AttachLSM(link.LSMOptions{Program: p}); err == nil {
 			defer lk.Close()
 			if err := objs.FileHookLsm.Put(uint32(0), uint32(1)); err == nil {
@@ -624,10 +664,6 @@ func main() {
 		} else {
 			log.Printf("[-] lsm/file_open attach failed (%v); tracepoint file hooks remain primary", err)
 		}
-	}
-	// Close anything that only landed in the catch-all map.
-	for _, p := range objs.Programs {
-		defer p.Close()
 	}
 
 	log.Printf("[-] EDR Engine active (event version %d, mode=%s). Streaming to stdout + %s",
