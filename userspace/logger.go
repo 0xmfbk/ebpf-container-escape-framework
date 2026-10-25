@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -227,9 +226,6 @@ func (rl *RotatingLogger) Close() error {
 	return nil
 }
 
-// NewEnterpriseWriter returns a writer that fans every write out to both
-// stdout (for foreground/systemd/journald capture) and the rotating file.
-func NewEnterpriseWriter(path string, maxBytes int64, maxBackups int) (io.Writer, *RotatingLogger) {
-	rl := NewRotatingLogger(path, maxBytes, maxBackups)
-	return io.MultiWriter(os.Stdout, rl), rl
-}
+// getWriter for the file sink is assembled in main.go: by default alerts
+// are mirrored to stdout (io.MultiWriter) for journald/foreground capture;
+// --quiet drops the mirror and writes the rotating file only.

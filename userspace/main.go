@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -243,6 +244,7 @@ func main() {
 		flagMode     = flag.String("mode", "", "override mode (audit only)")
 		flagBPFObj   = flag.String("bpf-obj", "../kernel/bpf_program.o", "path to BPF object file")
 		flagHealth   = flag.Duration("health-interval", defaultHealthTick, "health log interval")
+		flagQuiet    = flag.Bool("quiet", false, "suppress the stdout mirror of alerts (file/SIEM only); no effect with output.target=stdout")
 	)
 	flag.Parse()
 
@@ -308,10 +310,19 @@ func main() {
 		if logPath == "" {
 			logPath = loaded.Log.Path
 		}
-		ew, rl := NewEnterpriseWriter(logPath, loaded.Log.MaxBytes, loaded.Log.MaxBackups)
+		rl := NewRotatingLogger(logPath, loaded.Log.MaxBytes, loaded.Log.MaxBackups)
 		rotLogger = rl
-		sink = newFileSink(enc, ew)
+		var alertWriter io.Writer = rl
+		if !*flagQuiet {
+			// Default: mirror alerts to stdout for journald/foreground
+			// capture. --quiet drops the mirror (file only).
+			alertWriter = io.MultiWriter(os.Stdout, rl)
+		}
+		sink = newFileSink(enc, alertWriter)
 	case "stdout":
+		if *flagQuiet {
+			log.Printf("[-] --quiet has no effect with output.target=stdout")
+		}
 		sink = newFileSink(enc, os.Stdout)
 	case "syslog":
 		scfg := loaded.Output.Syslog

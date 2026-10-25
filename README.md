@@ -215,6 +215,10 @@ Health line every 60s:
 Targets: `dropped` = 0, `ver_mismatch` = 0, `lineage_cache` under capacity,
 `degraded` = false, `last_err` empty.
 
+Foreground runs mirror alerts to stdout (journald captures this under
+systemd). Use `--quiet` to write the rotating file only — recommended when
+testing in a terminal.
+
 ### Prometheus
 
 `[metrics] enabled = true` exposes `http://<host>:9400/metrics` (hand-rolled
