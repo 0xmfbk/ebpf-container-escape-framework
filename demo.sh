@@ -22,7 +22,7 @@ LOG=/tmp/edr-demo.log
 CFG=/tmp/edr-demo-config.toml
 CANARY=/tmp/secret-canary.txt
 
-step "eBPF Container Escape EDR — v3.1.0 walkthrough"
+step "eBPF Container Escape EDR - v3.1.0 walkthrough"
 echo -e "  kernel : $(uname -r)"
 echo -e "  BTF    : $(ls -la /sys/kernel/btf/vmlinux 2>/dev/null | awk '{print $5" bytes"}')"
 echo -e "  LSM    : $(cat /sys/kernel/security/lsm 2>/dev/null | tr ',' ' ' | grep -o 'bpf' | head -1 | sed 's/bpf/bpf (LSM hooks eligible)/' || echo 'not active')"
@@ -53,14 +53,14 @@ sleep 3
 kill -0 "$DPID" 2>/dev/null || { echo "daemon died:"; tail -5 "$LOG"; exit 1; }
 ok "daemon pid=$DPID · event wire v4 (224 bytes)"
 grep -o 'lsm/file_open attached.*' "$LOG" | sed 's/^/  /' \
-    || note "BPF LSM not active on this kernel — tracepoint file hooks in use (documented fallback)"
+    || note "BPF LSM not active on this kernel - tracepoint file hooks in use (documented fallback)"
 grep -o 'EDR Engine active.*' "$LOG" | sed 's/^/  /'
 
 step "2/7 · Prometheus /metrics"
 curl -s http://127.0.0.1:9400/metrics | grep -E '^ebpf_edr_(up|build_info|uptime_seconds)' | sed 's/^/  /'
 note "per-action counters, drops, caches, sink delivery, degraded state — all here"
 
-step "3/7 · adversary emulation — 19 actions, one binary"
+step "3/7 · adversary emulation - 19 actions, one binary"
 EDR_EMULATION_CONFIRMED=1 ./emulation/adversary > /dev/null 2>&1 || true
 sleep 2
 ok "escape attempts, fileless exec, module load, IPv6 C2, log tampering fired"
@@ -81,7 +81,7 @@ grep -q '"action":"Kernel_Module_Load"' /var/log/ebpf_edr.json \
 grep -q '"target":"/var/log/ebpf_edr.json.emul_probe"' /var/log/ebpf_edr.json \
     && ok "truncate-based log tampering" || echo -e "  ${R}✘${N} log tampering v2"
 
-step "5/7 · sample alert — CRITICAL canary (zero false positives by design)"
+step "5/7 · sample alert - CRITICAL canary (zero false positives by design)"
 echo "SuperSecretToken" > "$CANARY"
 cat "$CANARY" > /dev/null
 sleep 2
@@ -94,8 +94,8 @@ curl -s http://127.0.0.1:9400/metrics | grep -E '^ebpf_edr_events_(dropped|recei
 
 step "7/7 · shutdown"
 kill -TERM "$DPID" 2>/dev/null; sleep 2; kill -KILL "$DPID" 2>/dev/null
-ok "clean SIGTERM exit — full session in /var/log/ebpf_edr.json"
+ok "clean SIGTERM exit - full session in /var/log/ebpf_edr.json"
 note "record the full verify suite too:  asciinema rec -c 'sudo -E make verify' verify.cast"
 
 echo
-echo -e "${G}═══ eBPF EDR v3.1.0 — detection & audit only, never enforces ═══${N}"
+echo -e "${G}═══ eBPF EDR v3.1.0 - detection & audit only, never enforces ═══${N}"
