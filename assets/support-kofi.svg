@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="64" viewBox="0 0 320 64" role="img" aria-label="Support on Ko-fi">
+  <rect x="1" y="1" width="318" height="62" rx="12" fill="#FF5E5B"/>
+  <!-- white pill with red coffee cup glyph -->
+  <rect x="12" y="14" width="36" height="36" rx="10" fill="#FFFFFF"/>
+  <g transform="translate(30,32)">
+    <!-- cup body -->
+    <path d="M -8 -6 h13 v8 a5 5 0 0 1 -5 5 h-3 a5 5 0 0 1 -5 -5 z" fill="#FF5E5B"/>
+    <!-- handle -->
+    <path d="M 5 -4 a4.5 4.5 0 1 1 0 8" fill="none" stroke="#FF5E5B" stroke-width="2.6"/>
+    <!-- steam -->
+    <path d="M -4 -10 q1.8 -2 0 -4 M 1 -10 q1.8 -2 0 -4" fill="none" stroke="#FF5E5B" stroke-width="1.8" stroke-linecap="round"/>
+  </g>
+  <text x="62" y="40" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" letter-spacing="0.5">Support on Ko-fi</text>
+</svg>

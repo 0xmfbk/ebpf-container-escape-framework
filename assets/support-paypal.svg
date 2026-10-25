@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="64" viewBox="0 0 300 64" role="img" aria-label="Support on PayPal">
+  <rect x="1" y="1" width="298" height="62" rx="12" fill="#FFC439" stroke="#D9A300" stroke-width="1.5"/>
+  <text x="150" y="40" text-anchor="middle" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="21" font-weight="700" font-style="italic" letter-spacing="0.5">
+    <tspan fill="#003087">Support on </tspan><tspan fill="#003087">Pay</tspan><tspan fill="#009CDE">Pal</tspan>
+  </text>
+</svg>

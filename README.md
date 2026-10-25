@@ -16,6 +16,13 @@
 
 <img src="docs/demo.gif" alt="eBPF EDR v3.1.0 terminal walkthrough" width="850">
 
+**Support the project:**
+
+<p align="center">
+  <a href="https://paypal.me/MUSTAFABANIKHALAF"><img src="./assets/support-paypal.svg" alt="Support on PayPal" height="64" /></a>&nbsp;&nbsp;
+  <a href="https://ko-fi.com/0xmfbk"><img src="./assets/support-kofi.svg" alt="Support on Ko-fi" height="64" /></a>
+</p>
+
 </div>
 
 > [!IMPORTANT]
