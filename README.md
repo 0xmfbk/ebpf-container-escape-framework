@@ -278,8 +278,9 @@ Record a full feature walkthrough in one command ([asciinema](https://asciinema.
 sudo apt install asciinema            # recorder (Debian/Ubuntu)
 sudo asciinema rec -t "eBPF EDR v3.1.0 walkthrough" -c ./demo.sh docs/demo.cast
 
-# gif conversion — agg is not in Debian repos; use its official image:
-docker run --rm -v "$PWD:/data" asciinema/agg docs/demo.cast docs/demo.gif
+# gif conversion — agg is not in Debian repos; use the official image
+# from GitHub Container Registry (bundled fonts, no local install):
+docker run --rm -u $(id -u):$(id -g) -v "$PWD:/data" ghcr.io/asciinema/agg docs/demo.cast docs/demo.gif
 ```
 
 The gif lives at `docs/demo.gif` and is embedded in the README hero above.
