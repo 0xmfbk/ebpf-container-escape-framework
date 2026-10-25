@@ -2,7 +2,7 @@
 
 # 🛡️ eBPF Container Escape EDR
 
-**Audit-only eBPF runtime sensor for Linux - container escape detection, hardened by design.**
+**Audit only eBPF runtime sensor for Linux - container escape detection, hardened by design.**
 
 [![CI](https://github.com/0xmfbk/ebpf-container-escape-framework/actions/workflows/ci.yml/badge.svg)](https://github.com/0xmfbk/ebpf-container-escape-framework/actions/workflows/ci.yml)
 ![Version](https://img.shields.io/badge/release-v3.1.0-blue)
@@ -26,7 +26,7 @@
 </div>
 
 > [!IMPORTANT]
-> **Detection & audit only - non-enforcing.** No BPF program returns `-EPERM`;
+> **Detection & audit only non enforcing.** No BPF program returns `-EPERM`;
 > no syscall is ever blocked. This is a runtime observation plane, not a
 > prevention plane. See [`docs/SECURITY.md`](docs/SECURITY.md) and [`THREAT_MODEL.md`](THREAT_MODEL.md).
 
@@ -89,7 +89,7 @@ Requirements: kernel ≥ 5.15 with `CONFIG_DEBUG_INFO_BTF` (`/sys/kernel/btf/vml
 | 18 | `Execveat` | ![MEDIUM](https://img.shields.io/badge/-MEDIUM-dfb317?style=flat-square) | T1620 | `sys_enter_execveat` - fd/memfd execution |
 | 19 | `Kernel_Module_Load` | ![HIGH](https://img.shields.io/badge/-HIGH-important?style=flat-square) | T1547.006 | `sys_enter_init_module` + `finit_module` |
 
-**Two detection classes** for the file-path rules (actions 3, 14, 15, 16):
+**Two detection classes** for the file path rules (actions 3, 14, 15, 16):
 
 - **Attempt-based** (canary, release_agent) → always on the `open`/`openat`/`openat2` tracepoints: they fire at syscall entry even when the target file doesn't exist - and on cgroup-v2 hosts, probing for `release_agent` *is* the attack.
 - **Resolved-path** (shadow, sockets, kernel-helpers, log writes) → owned by `lsm/file_open` when the kernel's active LSM list includes `bpf` (kernel-resolved path via `bpf_d_path`, io_uring opens included), tracepoints otherwise. Exactly one event per open either way.
@@ -258,7 +258,7 @@ restriction, `ProtectSystem=strict` & friends - `systemd-analyze security` expos
 
 ```bash
 sudo -E make verify                       # 15 core + 2 SIEM stages
-EDR_VERIFY_DESTRUCTIVE=1 sudo -E make verify   # + container smoke test (wipes Docker!)
+EDR_VERIFY_DESTRUCTIVE=1 sudo -E make verify   # + container smoke test (wipes Docker)
 ```
 
 Latest full run - **v3.1.0 on kernel `6.12.111+deb13-amd64` (Debian 13)**:
@@ -277,32 +277,6 @@ nothing ships without a green run there first.
 
 ---
 
-## 🎬 Demo & Session Recording
-
-Record a full feature walkthrough in one command ([asciinema](https://asciinema.org)):
-
-```bash
-sudo apt install asciinema            # recorder (Debian/Ubuntu)
-sudo asciinema rec -t "eBPF EDR v3.1.0 walkthrough" -c ./demo.sh docs/demo.cast
-
-# gif conversion - agg is not in Debian repos; use the official image
-# from GitHub Container Registry (bundled fonts, no local install):
-docker run --rm -u $(id -u):$(id -g) -v "$PWD:/data" ghcr.io/asciinema/agg docs/demo.cast docs/demo.gif
-```
-
-The gif lives at `docs/demo.gif` and is embedded in the README hero above.
-`demo.sh` walks the whole stack: daemon start (with LSM attach line), `/metrics`
-scrape, adversary emulation (all 19 actions), canary trigger, per-action alert
-summary, sensor heartbeat. To record your own full test session instead:
-
-```bash
-sudo asciinema rec -t "v3.1.0 full verification" my-test.cast
-#    inside: make check-env && make kernel userspace emulation && sudo -E make verify
-#    exit with Ctrl-D
-```
-
----
-
 ## 🔧 Development
 
 | Target | Purpose |
@@ -318,7 +292,7 @@ sudo asciinema rec -t "v3.1.0 full verification" my-test.cast
 | `make ci` / `clean` | Local CI gate / remove artifacts |
 
 Adversary harness runs require `EDR_EMULATION_CONFIRMED=1` (in-repo callers set
-it automatically) - it fires real syscalls and belongs on disposable hosts.
+it automatically) it fires real syscalls and belongs on disposable hosts.
 
 ---
 
@@ -335,18 +309,6 @@ it automatically) - it fires real syscalls and belongs on disposable hosts.
 | [`docs/WSL2.md`](docs/WSL2.md) | Building & running under WSL2 |
 | [`docs/RELEASE_v3.1.0.md`](docs/RELEASE_v3.1.0.md) · [`v3.0.0`](docs/RELEASE_v3.0.0.md) | Release notes |
 | [`SECURITY.md`](SECURITY.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) | Disclosure policy · contribution workflow · community standards |
-
----
-
-## 🗺️ Roadmap
-
-| Phase | Status | Shipped |
-|-------|--------|---------|
-| **A - Correctness & anti-evasion** | ✅ v3.0.0 | openat2 hook · PID self-exclusion · ringbuf hygiene · failure-mode hardening |
-| **B - Least-privilege deployment** | ✅ v3.0.0 | caps-not-privileged · Secrets · probes/watchdog · exposure 2.7 |
-| **C - Observability** | ✅ v3.0.0 | `/metrics` · sensor heartbeats · `degraded`/`last_err` |
-| **D - Detection strength** | ✅ v3.1.0 | BPF LSM resolved paths · IPv6 (wire v4) · fileless & module actions · log-tamper v2 · suffix scan |
-| E - Depth & supply chain | 📋 next | io_uring_setup · UDP sendto/sendmsg · per-cgroup rate fairness · SBOM + cosign · golangci-lint/govulncheck |
 
 ---
 
