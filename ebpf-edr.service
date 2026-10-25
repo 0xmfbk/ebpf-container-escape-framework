@@ -45,6 +45,17 @@ RestrictSUIDSGID=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
 SystemCallArchitectures=native
+# Deny-by-default syscall allow-list: @system-service covers the Go
+# runtime plus file/network/ipc basics; the additions are exactly what
+# eBPF loading needs (bpf(), perf_event_open for attach) and @mount for
+# bpffs on hosts where /sys/fs/bpf is not pre-mounted.
+SystemCallFilter=@system-service @mount bpf perf_event_open
+# The daemon uses unix (sd_notify, syslog), internet (webhook/kubelet)
+# and netlink sockets; everything else (packet, exotic) is denied.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# eBPF loads via syscalls, not device nodes; systemd's private /dev
+# still provides null/zero/urandom which TLS and the runtime need.
+PrivateDevices=true
 
 ReadWritePaths=/var/log /sys/fs/bpf
 RuntimeDirectory=ebpf-edr
