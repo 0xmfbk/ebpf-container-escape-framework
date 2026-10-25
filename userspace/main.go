@@ -376,12 +376,12 @@ func main() {
 		}
 	}
 	var (
-		kpUnshare, kpPivot                   link.Link
-		tpOpenat, tpOpen, tpOpenat2          link.Link
-		tpExecve, tpConn                     link.Link
-		tpPtrace, tpUnlinkat                 link.Link
-		tpBPF, tpPerf, tpMount, tpSetns      link.Link
-		tpChroot, tpMprotect                 link.Link
+		kpUnshare, kpPivot              link.Link
+		tpOpenat, tpOpen, tpOpenat2     link.Link
+		tpExecve, tpConn                link.Link
+		tpPtrace, tpUnlinkat            link.Link
+		tpBPF, tpPerf, tpMount, tpSetns link.Link
+		tpChroot, tpMprotect            link.Link
 	)
 	attach("unshare", func() (e error) { kpUnshare, e = link.Kprobe("__x64_sys_unshare", objs.ProgUnshare, nil); return })
 	attach("pivot_root", func() (e error) { kpPivot, e = link.Kprobe("__x64_sys_pivot_root", objs.ProgPivotRoot, nil); return })

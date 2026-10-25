@@ -143,12 +143,12 @@ type networkSink struct {
 	dropped uint64
 	retries uint64
 
-	consecutive   atomic.Int32
-	circuitOpen   atomic.Bool
-	resetPending  atomic.Bool // a cooldown reset goroutine is scheduled
-	closed        atomic.Bool
-	inFlight      atomic.Int64
-	lastErrLog    atomic.Int64 // unix nanos of last "delivery failing" log
+	consecutive  atomic.Int32
+	circuitOpen  atomic.Bool
+	resetPending atomic.Bool // a cooldown reset goroutine is scheduled
+	closed       atomic.Bool
+	inFlight     atomic.Int64
+	lastErrLog   atomic.Int64 // unix nanos of last "delivery failing" log
 }
 
 func newNetworkSink(enc Encoder, transport Transport, cfg NetworkSinkConfig) *networkSink {
