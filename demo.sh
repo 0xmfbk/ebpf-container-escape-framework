@@ -34,6 +34,7 @@ echo -e "  LSM    : $(cat /sys/kernel/security/lsm 2>/dev/null | tr ',' ' ' | gr
 step "1/7 · sensor start (audit-only, quiet, metrics + heartbeat)"
 cat > "$CFG" <<CONF
 mode = "audit"
+[filter]
 canary_paths = ["$CANARY"]
 [network]
 suspicious_ports = [4444, 1337, 31337]
