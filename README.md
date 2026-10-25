@@ -14,6 +14,8 @@
 
 **19 detection actions · 24 BPF programs · BPF-LSM resolved-path rules · IPv6 · wire format v4**
 
+<img src="docs/demo.gif" alt="eBPF EDR v3.1.0 terminal walkthrough" width="850">
+
 </div>
 
 > [!IMPORTANT]
@@ -48,7 +50,7 @@ cd ebpf-container-escape-framework
 make check-env                 # read-only probe: toolchain, BTF, tracefs, LSM, systemd
 sudo make deps                 # one-shot bootstrap: clang, libbpf, bpftool, Go 1.26+
 make kernel userspace emulation
-sudo -E make verify            # full suite: 100 checks (97 core + SIEM) on Debian/6.12
+sudo -E make verify            # full suite: 104 checks (97 core + 7 SIEM) on Debian/6.12
 sudo ./install.sh              # systemd service (hardened unit, config preserved)
 ```
 
@@ -80,7 +82,7 @@ Requirements: kernel ≥ 5.15 with `CONFIG_DEBUG_INFO_BTF` (`/sys/kernel/btf/vml
 | 18 | `Execveat` | ![MEDIUM](https://img.shields.io/badge/-MEDIUM-dfb317?style=flat-square) | T1620 | `sys_enter_execveat` — fd/memfd execution |
 | 19 | `Kernel_Module_Load` | ![HIGH](https://img.shields.io/badge/-HIGH-important?style=flat-square) | T1547.006 | `sys_enter_init_module` + `finit_module` |
 
-**Two detection classes, by semantics** (actions 3/14 and all file-path rules):
+**Two detection classes** for the file-path rules (actions 3, 14, 15, 16):
 
 - **Attempt-based** (canary, release_agent) → always on the `open`/`openat`/`openat2` tracepoints: they fire at syscall entry even when the target file doesn't exist — and on cgroup-v2 hosts, probing for `release_agent` *is* the attack.
 - **Resolved-path** (shadow, sockets, kernel-helpers, log writes) → owned by `lsm/file_open` when the kernel's active LSM list includes `bpf` (kernel-resolved path via `bpf_d_path`, io_uring opens included), tracepoints otherwise. Exactly one event per open either way.
@@ -90,17 +92,17 @@ Requirements: kernel ≥ 5.15 with `CONFIG_DEBUG_INFO_BTF` (`/sys/kernel/btf/vml
 ## 🏗️ Architecture
 
 ```
-        ┌────────────────────────── kernel (24 programs) ──────────────────────────┐
-  syscalls ──► 23 tracepoints/kprobes ──► action_enabled gate ──► PID self-exclusion │
-  opens    ──► lsm/file_open (resolved paths, optional)   └─► comm/cgroup filters   │
-        │                    canary O(1) map · path classifiers                     │
-        └──────────────────────► 1 MiB ringbuf · event_t v4 (224 B, zeroed) ◄──────┘
-                                   │
-        userspace Go daemon ───────┘
-        ringbuf → bounded chan → enrich (container ID · cgroup path · lineage ≤16 ·
-        K8s pod/ns/SA from LRU caches) → per-action token bucket → severity/MITRE
-        → encoder (JSON/ECS/OCSF/CEF/LEEF) → sink (file/syslog/webhook) + Prometheus
-        heartbeat 10s → systemd watchdog · K8s probes · Sensor_Heartbeat → SIEM
+  KERNEL (24 programs)
+  ├─ 23 syscall hooks (tracepoints + kprobes) ──► action_enabled gate
+  │                                              └─► PID self-exclusion → comm/cgroup filters
+  ├─ lsm/file_open (optional, resolved paths) ──► canary O(1) map · path classifiers
+  └────────────────────────────► 1 MiB ringbuf · event_t v4 (224 B, zeroed)
+                                        │
+  USERSPACE (Go daemon, zero deps)      │
+  ringbuf → bounded chan → enrich (container ID · cgroup path · lineage ≤16 ·
+  K8s pod/ns/SA via LRU caches) → per-action token bucket → severity/MITRE
+  → encoder (JSON/ECS/OCSF/CEF/LEEF) → sink (file/syslog/webhook) + Prometheus
+  heartbeat 10s → systemd watchdog · K8s probes · Sensor_Heartbeat → SIEM
 ```
 
 <details>
@@ -262,8 +264,9 @@ Latest full run — **v3.1.0 on kernel `6.12.111+deb13-amd64` (Debian 13)**:
 - Watchdog: SIGSTOP-frozen daemon detected and restarted by systemd within 30s
 - Production: `[-] lsm/file_open attached` in the journal, `/metrics` live
 
-Every verify stage is also wired to CI (build, vet, race, fuzz smoke, kernel build,
-emulation module) — nothing ships without a green run.
+CI gates every push (build, vet, race detector, fuzz smoke tests, kernel
+build, emulation module). The runtime suite above runs on a kernel host —
+nothing ships without a green run there first.
 
 ---
 
@@ -272,19 +275,22 @@ emulation module) — nothing ships without a green run.
 Record a full feature walkthrough in one command ([asciinema](https://asciinema.org)):
 
 ```bash
-sudo apt install asciinema agg        # once: recorder + gif converter
-asciinema rec -t "eBPF EDR v3.1.0 walkthrough" -c ./demo.sh docs/demo.cast
-agg docs/demo.cast docs/demo.gif      # embed the gif in README/docs
+sudo apt install asciinema            # recorder (Debian/Ubuntu)
+sudo asciinema rec -t "eBPF EDR v3.1.0 walkthrough" -c ./demo.sh docs/demo.cast
+
+# gif conversion — agg is not in Debian repos; use its official image:
+docker run --rm -v "$PWD:/data" asciinema/agg docs/demo.cast docs/demo.gif
 ```
 
+The gif lives at `docs/demo.gif` and is embedded in the README hero above.
 `demo.sh` walks the whole stack: daemon start (with LSM attach line), `/metrics`
 scrape, adversary emulation (all 19 actions), canary trigger, per-action alert
 summary, sensor heartbeat. To record your own full test session instead:
 
 ```bash
-asciinema rec my-test.cast
-# ... run: make check-env && make kernel userspace emulation && sudo -E make verify ...
-# exit with Ctrl-D
+sudo asciinema rec -t "v3.1.0 full verification" my-test.cast
+#    inside: make check-env && make kernel userspace emulation && sudo -E make verify
+#    exit with Ctrl-D
 ```
 
 ---
