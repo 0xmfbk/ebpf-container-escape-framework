@@ -165,6 +165,13 @@ TOML at `/etc/ebpf-edr/config.toml`. Precedence: CLI > env (`EDR_*`) > file > de
     lineage_cache_size = 20000
     cgroup_cache_size  = 5000
 
+    [metrics]
+    enabled = false            # Prometheus /metrics endpoint
+    bind    = "127.0.0.1:9400"
+
+    [sensor]
+    heartbeat_event = false    # INFO Sensor_Heartbeat alert each health tick
+
 Reload: `sudo systemctl reload ebpf-edr`. `mode = "enforce"` is rejected;
 this build is audit only.
 
@@ -203,9 +210,28 @@ Health line every 60s:
              chan=N/4096 lineage_cache=N/20000 lineage_hits=N
              lineage_misses=N cgroup_cache=N/5000
              sink_sent=N sink_failed=N sink_dropped=N sink_retries=N
-             sink_queue=N sink_circuit=bool
+             sink_queue=N sink_circuit=bool degraded=bool last_err="..."
 
-Targets: `dropped` = 0, `ver_mismatch` = 0, `lineage_cache` under capacity.
+Targets: `dropped` = 0, `ver_mismatch` = 0, `lineage_cache` under capacity,
+`degraded` = false, `last_err` empty.
+
+### Prometheus
+
+`[metrics] enabled = true` exposes `http://<host>:9400/metrics` (hand-rolled
+text format, zero extra dependencies): `ebpf_edr_events_total{action=...}`,
+drop/rate-limit/parse counters, lineage and cgroup cache entries/hits, sink
+delivery counters, queue depth, circuit-breaker state, `logging_degraded`,
+and `ebpf_edr_build_info`. The Helm chart and raw DaemonSet annotate pods
+(`prometheus.io/scrape`) and expose port 9400 by default; on VM/bare metal
+the endpoint binds localhost unless `bind` is changed.
+
+### Sensor silence detection
+
+`[sensor] heartbeat_event = true` ships a synthetic INFO `Sensor_Heartbeat`
+alert through the normal sink every health tick (default 60s). Alert on its
+*absence* in the SIEM (e.g. no heartbeat from a host in 5 minutes) to catch
+dead, muted, or cut-off sensors. Enabled by default in the Kubernetes
+deployments.
 
 ## Development
 

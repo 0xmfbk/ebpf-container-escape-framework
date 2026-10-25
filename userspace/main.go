@@ -4,7 +4,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -24,6 +23,7 @@ const (
 	eventSize         = 208
 	eventWords        = eventSize / 8
 	eventVersion      = 3
+	daemonVersion     = "3.0.0"
 	defaultHealthTick = 60 * time.Second
 	ActionMaxID       = 17
 )
@@ -161,6 +161,8 @@ func calculateSeverity(action, command, target string, destPort uint16) (string,
 		return "CRITICAL", "T1611", "Escape to Host: cgroup release_agent"
 	case "Canary_Triggered":
 		return "CRITICAL", "T1552.001", "Unsecured Credentials: Canary File Accessed"
+	case "Sensor_Heartbeat":
+		return "INFO", "N/A", "Sensor Health Heartbeat"
 	default:
 		return "INFO", "T1204", "User Execution"
 	}
@@ -179,6 +181,49 @@ type agentStats struct {
 }
 
 var stats agentStats
+
+// actionCounts[i] counts emitted alerts per kernel action ID (1..16);
+// sensorHeartbeats counts synthetic Sensor_Heartbeat alerts.
+var (
+	actionCounts     [ActionMaxID]uint64
+	sensorHeartbeats uint64
+	lastErrVal       atomic.Value // string, most recent operator-visible error
+)
+
+func setLastErr(format string, args ...any) {
+	lastErrVal.Store(fmt.Sprintf(format, args...))
+}
+
+func getLastErr() string {
+	if v := lastErrVal.Load(); v != nil {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// emitSensorHeartbeat ships a synthetic INFO alert through the normal
+// sink so a SIEM can alert on sensor silence: no Sensor_Heartbeat from a
+// host within N minutes means the sensor is dead, muted, or cut off.
+func emitSensorHeartbeat(sink Sink) {
+	host, _ := getHostname()
+	sink.Submit(&SecurityAlert{
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		PID:       uint32(os.Getpid()),
+		Command:   "ebpf-edr",
+		Action:    "Sensor_Heartbeat",
+		Target: fmt.Sprintf("host=%s recv=%d written=%d dropped=%d rate_limited=%d",
+			host,
+			atomic.LoadUint64(&stats.eventsReceived),
+			atomic.LoadUint64(&stats.eventsWritten),
+			atomic.LoadUint64(&stats.eventsDropped),
+			atomic.LoadUint64(&stats.eventsRateLim)),
+		Severity: "INFO",
+		Runtime:  "host",
+	})
+	atomic.AddUint64(&sensorHeartbeats, 1)
+}
 
 type rawEvent struct{ data [eventWords]uint64 }
 
@@ -235,9 +280,9 @@ func main() {
 	// and is deliberately not used anymore; comm_allowlist remains a
 	// user-configured filter only.
 
-	var (
-		rotLogger io.Closer
-	)
+	// rotLogger is non-nil only for the file sink; its Degraded() state
+	// feeds the health line and /metrics.
+	var rotLogger *RotatingLogger
 	defer func() {
 		if rotLogger != nil {
 			rotLogger.Close()
@@ -487,22 +532,26 @@ func main() {
 			newCfg, err := LoadConfig(cfgPath)
 			if err != nil {
 				atomic.AddUint64(&stats.reloadFails, 1)
+				setLastErr("reload parse: %v", err)
 				log.Printf("[reload] parse failed: %v (keeping current)", err)
 				continue
 			}
 			newCfg.ApplyEnvAndFlags(*flagLogPath, *flagLogLevel, *flagMode)
 			if err := newCfg.Validate(); err != nil {
 				atomic.AddUint64(&stats.reloadFails, 1)
+				setLastErr("reload invalid: %v", err)
 				log.Printf("[reload] invalid: %v (keeping current)", err)
 				continue
 			}
 			if err := populateFilterMaps(objs.CommAllow, objs.CgAllow, newCfg); err != nil {
 				atomic.AddUint64(&stats.reloadFails, 1)
+				setLastErr("reload filter maps: %v", err)
 				log.Printf("[reload] filter map update failed: %v", err)
 				continue
 			}
 			if err := populateActionEnabled(objs.ActionEnabled, newCfg); err != nil {
 				atomic.AddUint64(&stats.reloadFails, 1)
+				setLastErr("reload action_enabled: %v", err)
 				log.Printf("[reload] action_enabled update failed: %v", err)
 				continue
 			}
@@ -517,6 +566,27 @@ func main() {
 
 	eventChan := make(chan rawEvent, eventChanSize)
 	done := make(chan struct{})
+
+	// Prometheus text-exposition endpoint (counters/gauges only). Started
+	// only when [metrics] enabled = true; a bind failure is logged and
+	// survived — observability must never take detection down.
+	if loaded.Metrics.Enabled {
+		ms := &metricsServer{
+			bind:  loaded.Metrics.Bind,
+			start: time.Now(),
+			sink:  sink.Stats,
+			lineage: func() (uint64, uint64, uint64, uint64) {
+				hits, misses := lineageC.stats()
+				return uint64(lineageC.size()), uint64(lineageC.capacity()), hits, misses
+			},
+			cgroup: func() (uint64, uint64) {
+				return uint64(cgroupC.size()), uint64(cgroupC.capacity())
+			},
+			queue:    func() int { return len(eventChan) },
+			degraded: func() bool { return rotLogger != nil && rotLogger.Degraded() },
+		}
+		go ms.serve()
+	}
 
 	go func() {
 		defer close(eventChan)
@@ -533,6 +603,7 @@ func main() {
 					return
 				}
 				atomic.AddUint64(&stats.ringbufReadErrs, 1)
+				setLastErr("ringbuf read: %v", err)
 				log.Printf("[ringbuf] read error: %v (retrying in %v)", err, backoff)
 				select {
 				case <-shutdown:
@@ -643,6 +714,7 @@ func main() {
 
 			sink.Submit(&alert)
 			atomic.AddUint64(&stats.eventsWritten, 1)
+			atomic.AddUint64(&actionCounts[ev.ActionID], 1)
 		}
 	}()
 
@@ -662,7 +734,8 @@ func main() {
 		case <-healthTicker.C:
 			lcHits, lcMisses := lineageC.stats()
 			st := sink.Stats()
-			log.Printf("[health] recv=%d written=%d dropped=%d rate_limited=%d parse_err=%d ver_mismatch=%d ringbuf_err=%d reloads=%d reload_fail=%d chan=%d/%d lineage_cache=%d/%d lineage_hits=%d lineage_misses=%d cgroup_cache=%d/%d sink_sent=%d sink_failed=%d sink_dropped=%d sink_retries=%d sink_queue=%d sink_circuit=%v",
+			loggingDegraded := rotLogger != nil && rotLogger.Degraded()
+			log.Printf("[health] recv=%d written=%d dropped=%d rate_limited=%d parse_err=%d ver_mismatch=%d ringbuf_err=%d reloads=%d reload_fail=%d chan=%d/%d lineage_cache=%d/%d lineage_hits=%d lineage_misses=%d cgroup_cache=%d/%d sink_sent=%d sink_failed=%d sink_dropped=%d sink_retries=%d sink_queue=%d sink_circuit=%v degraded=%v last_err=%q",
 				atomic.LoadUint64(&stats.eventsReceived),
 				atomic.LoadUint64(&stats.eventsWritten),
 				atomic.LoadUint64(&stats.eventsDropped),
@@ -676,7 +749,13 @@ func main() {
 				lineageC.size(), lineageC.capacity(),
 				lcHits, lcMisses,
 				cgroupC.size(), cgroupC.capacity(),
-				st.Sent, st.Failed, st.Dropped, st.Retries, st.QueueDepth, st.CircuitOpen)
+				st.Sent, st.Failed, st.Dropped, st.Retries, st.QueueDepth, st.CircuitOpen,
+				loggingDegraded, getLastErr())
+			// Synthetic heartbeat through the normal sink: lets the SIEM
+			// alert on sensor silence. Honors live config (SIGHUP reload).
+			if getConfig().Sensor.HeartbeatEvent {
+				emitSensorHeartbeat(sink)
+			}
 		case <-done:
 			log.Println("[-] Worker finished, shutting down.")
 			if err := sink.Flush(3 * time.Second); err != nil {

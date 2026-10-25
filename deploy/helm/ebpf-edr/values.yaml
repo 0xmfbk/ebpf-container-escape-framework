@@ -83,3 +83,15 @@ secret:
   create: false
   existingSecret: ""
   splunkToken: ""
+
+# Prometheus text-exposition endpoint (/metrics): counters and gauges
+# only (events per action, drops, rate limits, sink delivery, caches,
+# degraded state). Enabled by default in-cluster; the pod IP is bound.
+metrics:
+  enabled: true
+  port: 9400
+
+# Synthetic Sensor_Heartbeat INFO alert every health tick (60s) through
+# the normal sink, so the SIEM can alert on sensor silence.
+sensor:
+  heartbeatEvent: true

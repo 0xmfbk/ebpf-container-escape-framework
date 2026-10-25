@@ -27,3 +27,8 @@ data:
     {{- end }}
     batch_size = 100
     {{- end }}
+    [metrics]
+    enabled = {{ .Values.metrics.enabled }}
+    bind = {{ printf "0.0.0.0:%v" .Values.metrics.port | quote }}
+    [sensor]
+    heartbeat_event = {{ .Values.sensor.heartbeatEvent }}

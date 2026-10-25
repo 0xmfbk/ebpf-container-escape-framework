@@ -20,6 +20,10 @@ spec:
       annotations:
         # Roll pods whenever the rendered config changes.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if .Values.metrics.enabled }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.metrics.port | quote }}
+        {{- end }}
     spec:
       hostPID: true   # required to resolve container IDs and process lineage
       priorityClassName: {{ .Values.priorityClassName }}
@@ -40,6 +44,12 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secret.existingSecret | default (printf "%s-token" (include "ebpf-edr.fullname" .)) }}
                   key: splunk-token
+          {{- end }}
+          {{- if .Values.metrics.enabled }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
           {{- end }}
           volumeMounts:
             - name: config

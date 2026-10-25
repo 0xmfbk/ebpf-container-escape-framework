@@ -11,4 +11,8 @@ data:
     level = "info"
     [output]
     format = "json"
-    target = "stdout"
+    target = "stdout"    [metrics]
+    enabled = true
+    bind = "0.0.0.0:9400"
+    [sensor]
+    heartbeat_event = true

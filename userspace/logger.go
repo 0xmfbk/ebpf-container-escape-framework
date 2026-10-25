@@ -196,6 +196,15 @@ func (rl *RotatingLogger) rotate() error {
 	return rl.openCurrent()
 }
 
+// Degraded reports whether file logging is currently unavailable (the
+// initial open failed, or a rotation failed and recovery has not yet
+// succeeded). Surfaced in the health line and on /metrics.
+func (rl *RotatingLogger) Degraded() bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	return rl.degraded
+}
+
 // Close flushes any buffered data, stops the flush goroutine, and closes
 // the underlying file. Safe to call once; subsequent calls are no-ops.
 func (rl *RotatingLogger) Close() error {

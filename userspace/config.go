@@ -3,7 +3,9 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -18,6 +20,8 @@ type Config struct {
 	Context         ContextConfig   `toml:"context"`
 	DisabledActions []string        `toml:"disabled_actions"`
 	Output          OutputConfig    `toml:"output"`
+	Metrics         MetricsConfig   `toml:"metrics"`
+	Sensor          SensorConfig    `toml:"sensor"`
 }
 
 type LogConfig struct {
@@ -74,6 +78,23 @@ type ContextConfig struct {
 	CgroupCacheSize  int `toml:"cgroup_cache_size"`
 }
 
+// MetricsConfig controls the Prometheus text-exposition endpoint. Off by
+// default: an audit-only sensor should not open listening sockets unless
+// an operator asks for it. Localhost bind by default so enabling it never
+// exposes counters to the network unintentionally.
+type MetricsConfig struct {
+	Enabled bool   `toml:"enabled"`
+	Bind    string `toml:"bind"`
+}
+
+// SensorConfig controls self-observation behavior.
+type SensorConfig struct {
+	// HeartbeatEvent emits a synthetic INFO "Sensor_Heartbeat" alert on
+	// every health tick so a SIEM can alert on sensor SILENCE (absence of
+	// heartbeats from a host = dead or muted sensor).
+	HeartbeatEvent bool `toml:"heartbeat_event"`
+}
+
 func DefaultConfig() Config {
 	return Config{
 		Mode: "audit",
@@ -86,6 +107,7 @@ func DefaultConfig() Config {
 		Rates:     RatesConfig{EventsPerSec: 200, Burst: 400},
 		Container: ContainerConfig{CacheMaxEntries: 5000},
 		Context:   ContextConfig{LineageMaxDepth: 16, LineageCacheSize: 20000, CgroupCacheSize: 5000},
+		Metrics:   MetricsConfig{Enabled: false, Bind: "127.0.0.1:9400"},
 		Output: OutputConfig{
 			Format: "json",
 			Target: "file",
@@ -213,6 +235,19 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("filter.comm_allowlist entry %q: length must be 1..15", cm)
 		}
 	}
+	// The kernel-side canary map keys are fixed 128-byte arrays; a longer
+	// path would be silently truncated into a key that can never match,
+	// i.e. a canary that looks armed but detects nothing.
+	for _, p := range c.Filter.CanaryPaths {
+		if len(p) == 0 || len(p) >= 128 {
+			return fmt.Errorf("filter.canary_paths entry %q: length must be 1..127", p)
+		}
+	}
+	if c.Metrics.Enabled {
+		if _, _, err := net.SplitHostPort(c.Metrics.Bind); err != nil {
+			return fmt.Errorf("metrics.bind %q: %w", c.Metrics.Bind, err)
+		}
+	}
 	return nil
 }
 
@@ -233,6 +268,19 @@ func (c *Config) ApplyEnvAndFlags(logPath, logLevel, mode string) {
 	}
 	if v := os.Getenv("EDR_WEBHOOK_AUTH_HEADER"); v != "" {
 		c.Output.Webhook.AuthHeader = v
+	}
+	if v := os.Getenv("EDR_METRICS_ENABLED"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			c.Metrics.Enabled = b
+		}
+	}
+	if v := os.Getenv("EDR_METRICS_BIND"); v != "" {
+		c.Metrics.Bind = v
+	}
+	if v := os.Getenv("EDR_SENSOR_HEARTBEAT"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			c.Sensor.HeartbeatEvent = b
+		}
 	}
 	if logPath != "" {
 		c.Log.Path = logPath

@@ -44,3 +44,14 @@ url         = ""
 auth_header = ""
 splunk_hec  = false
 batch_size  = 100
+
+# Prometheus /metrics endpoint (counters and gauges only). Off by default;
+# binds localhost so enabling it never exposes counters to the network.
+[metrics]
+enabled = false
+bind = "127.0.0.1:9400"
+
+# Synthetic INFO Sensor_Heartbeat alert every health tick (60s) through
+# the normal sink, so a SIEM can alert on sensor silence.
+[sensor]
+heartbeat_event = false

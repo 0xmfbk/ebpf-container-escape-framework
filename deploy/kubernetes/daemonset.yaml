@@ -17,6 +17,9 @@ spec:
     metadata:
       labels:
         app: ebpf-edr
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9400"
     spec:
       hostPID: true           # REQUIRED: to resolve container IDs and process lineage
       hostNetwork: false      # tracepoints capture host network events
@@ -39,6 +42,10 @@ spec:
               add: ["BPF", "PERFMON", "SYS_ADMIN"]
             seccompProfile:
               type: RuntimeDefault
+          ports:
+            - name: metrics
+              containerPort: 9400
+              protocol: TCP
           volumeMounts:
             - name: config
               mountPath: /etc/ebpf-edr

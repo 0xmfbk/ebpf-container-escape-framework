@@ -1,4 +1,4 @@
-# v3.0.0 - Evasion-Proofing, openat2 Coverage & Failure-Mode Hardening
+# v3.0.0 - Evasion-Proofing, Hardened Deployment & Observability
 
 ## What's New in v3.0.0
 
@@ -23,6 +23,43 @@ handlers were merged in the process).
   `bpf_ringbuf_reserve()`. Reserved ring memory is not zeroed, so stale bytes
   from recycled slots no longer leak into `aux_*` fields of unrelated alerts
   shipped to the SIEM.
+- **Least-privilege deployment:** the Kubernetes DaemonSet (Helm and raw
+  manifests) no longer runs `privileged: true` — all capabilities dropped,
+  only `BPF`/`PERFMON`/`SYS_ADMIN` added, seccomp `RuntimeDefault`.
+- **SIEM credentials out of ConfigMaps:** new `secret.yaml` template (or
+  bring your own via `secret.existingSecret`); the daemon expands
+  `${SPLUNK_HEC_TOKEN}` in config at load time (this expansion was
+  documented before but never actually implemented — sending the literal
+  string as the auth header).
+
+### 🏥 Self-Healing
+
+- The daemon signals systemd (`Type=notify` + `WatchdogSec=30`) and touches
+  a heartbeat file every 10s. A hung sensor is restarted by systemd or the
+  Kubernetes liveness probe — verified live: `SIGSTOP` the daemon and it is
+  detected and replaced within 30s.
+- `systemd-analyze security` exposure: **2.7 OK** (syscall allow-list
+  `@system-service @mount bpf perf_event_open`, address-family restriction,
+  private devices, plus ProtectClock/Hostname/KernelLogs, RestrictNamespaces,
+  `OOMScoreAdjust=-500`).
+- Kubernetes: liveness/readiness probes on the heartbeat file,
+  `checksum/config` rollout annotation, `priorityClassName:
+  system-node-critical`, update strategy.
+
+### 📈 Observability
+
+- **Prometheus `/metrics`** (zero new dependencies, hand-rolled text
+  exposition): per-action `ebpf_edr_events_total{action=...}`, drop and
+  rate-limit counters, ring buffer errors, reload counters, lineage/cgroup
+  cache entries and hit rates, sink delivery counters, queue depth,
+  circuit-breaker state, `ebpf_edr_logging_degraded`, `ebpf_edr_build_info`.
+  Off by default on hosts (`127.0.0.1:9400`), on by default in-cluster with
+  `prometheus.io/scrape` annotations.
+- **Sensor silence detection:** `[sensor] heartbeat_event = true` ships a
+  synthetic INFO `Sensor_Heartbeat` alert every health tick so the SIEM can
+  alert on absence (dead/muted/cut-off sensor). On by default in-cluster.
+- The health line gained `degraded=` and `last_err=` fields, and the daemon
+  now honors reloaded (`SIGHUP`) `[sensor]`/`[metrics]` settings.
 
 ### ⚙️ Reliability (silent failures are now loud — or self-healing)
 
@@ -79,13 +116,16 @@ handlers were merged in the process).
 **81 PASS / 3 WARN / 0 FAIL (core) + 7 PASS / 0 FAIL (SIEM)** on kernel
 `6.12.111+deb13-amd64` (Debian 13). Two WARNs are the intentional Docker
 stage opt-in notice; the third is the synthetic perf workload's CPU reading —
-idle CPU is verified separately at 0.40%.
+idle CPU is verified separately at 0.40–0.70%.
 
 - 15 BPF programs passing the kernel verifier (including `trace_openat2`)
 - Lineage cache bounded at exactly 20000/20000 under 25,000 forks
 - Ring buffer drops under 25k-fork stress: **0**
 - All 8 Phase-2.4 hook actions observed end to end under PID-based
   self-exclusion
+- Watchdog: `SIGSTOP`-frozen daemon detected and restarted by systemd
+  within 30s (`Failed with result 'watchdog'` → auto-restart → streaming)
+- `systemd-analyze security` exposure level: **2.7 OK**
 
 ## Install / Upgrade
 
