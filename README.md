@@ -4,7 +4,7 @@
   <a href="https://github.com/0xmfbk/ebpf-container-escape-framework/actions/workflows/ci.yml">
     <img src="https://github.com/0xmfbk/ebpf-container-escape-framework/actions/workflows/ci.yml/badge.svg" alt="CI">
   </a>
-  <img src="https://img.shields.io/badge/Go-1.21%2B-blue" alt="Go Version">
+  <img src="https://img.shields.io/badge/Go-1.26%2B-blue" alt="Go Version">
   <img src="https://img.shields.io/badge/Kernel-5.15%20LTS%2B-orange" alt="Kernel Support">
   <img src="https://img.shields.io/badge/Memory-%3C30MB-green" alt="Memory Footprint">
   <img src="https://img.shields.io/badge/License-MIT-purple" alt="License">
@@ -24,12 +24,15 @@ An ultra lightweight, audit only Linux EDR agent built with eBPF (C) and a high 
 
 ### ✨ Why this framework?
 *   **🎯 Canary Files (Zero False Positives):** Plant invisible paths in the kernel. If an attacker touches them (e.g., K8s service account tokens), it triggers a `CRITICAL` alert instantly.
+*   **🛡️ Evasion-Resistant:** `openat2` is hooked (no bypass of file rules), and sensor self-exclusion is PID-based — an attacker cannot become invisible by renaming their process to `ebpf-edr`.
 *   **☁️ K8s Context Enrichment:** Asynchronously polls the Kubelet API to map `cgroup_id` to Pod Name, Namespace, and ServiceAccount without inflating the 208-byte kernel wire format.
 *   **🐧 5.15 LTS Compatible:** Structural support for Ubuntu 22.04 and Debian 12, tested and verified on Kernel 6.12.
 *   **⚡ High Performance:** `0.40%` idle CPU and `0` ringbuf drops under a 25,000 fork stress test.
 
-**Status:** Phase 2.7 complete. 13 MITRE ATT&CK techniques across 16 actions.
-Verified end to end on kernel 6.12.111 (82 PASS / 0 FAIL). 
+**Status:** v3.0.0 — evasion-proofing & failure-mode hardening. 13 MITRE
+ATT&CK techniques across 16 actions; open, openat and openat2 are all
+covered. Verified end to end on kernel 6.12.111+deb13 (81 PASS / 0 FAIL
+core + 7 PASS SIEM).
 
 ## Coverage
 
@@ -92,8 +95,8 @@ Absent `[output]`, behavior is byte identical to v1.x.
 ## Requirements
 
 - Linux Kernel >= 5.15 LTS with `CONFIG_DEBUG_INFO_BTF=y` (`/sys/kernel/btf/vmlinux`)
-- Tested on Debian 13 (Kernel 6.12). See `docs/KERNEL_COMPATIBILITY.md` for the full matrix.
-- clang, gcc, Go >= 1.21, bpftool, libbpf headers
+- Tested on Debian 13 (Kernel 6.12). See `docs/KERNEL_COMPATIBILITY.md` for the full matrix and `docs/WSL2.md` for WSL2.
+- clang, gcc, Go >= 1.26, bpftool, libbpf headers — `sudo make deps` bootstraps all of them on Debian/Ubuntu
 - Root with `CAP_BPF CAP_PERFMON CAP_SYS_ADMIN`
 
 ## Build
@@ -109,7 +112,9 @@ Absent `[output]`, behavior is byte identical to v1.x.
 Runs environment probe, build, C/Go struct layout assertion, BPF verifier
 dry-run, runtime smoke, adversary emulation, performance, config matrix,
 SIGHUP reload, idle CPU, lineage enrichment, cache bounds, new hooks,
-format matrix, and webhook delivery.
+format matrix, and webhook delivery. The Docker container smoke test is
+destructive (removes all containers, restarts Docker) and only runs with
+`EDR_VERIFY_DESTRUCTIVE=1` on a disposable host.
 
 ## Install (systemd)
 
@@ -229,6 +234,7 @@ Targets: `dropped` = 0, `ver_mismatch` = 0, `lineage_cache` under capacity.
 - `docs/SECURITY.md` - threat model, capabilities, sandbox, failure modes.
 - `docs/SIEM_INTEGRATION.md` - Splunk, Elastic, Sentinel, QRadar recipes.
 - `docs/KERNEL_COMPATIBILITY.md` - kernel floor (5.15 LTS), feature matrix, and vmlinux.h pinning policy.
+- `docs/WSL2.md` - building and running the sensor under WSL2, plus `make deps` / `make check-env`.
 - `SECURITY.md` - vulnerability disclosure policy and supported versions.
 - `CONTRIBUTING.md` - contribution workflow and local CI gate.
 - `CODE_OF_CONDUCT.md` - community standards.
