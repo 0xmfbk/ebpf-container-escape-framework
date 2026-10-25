@@ -2,7 +2,7 @@
 
 # 🛡️ eBPF Container Escape EDR
 
-**Audit-only eBPF runtime sensor for Linux — container escape detection, hardened by design.**
+**Audit-only eBPF runtime sensor for Linux - container escape detection, hardened by design.**
 
 [![CI](https://github.com/0xmfbk/ebpf-container-escape-framework/actions/workflows/ci.yml/badge.svg)](https://github.com/0xmfbk/ebpf-container-escape-framework/actions/workflows/ci.yml)
 ![Version](https://img.shields.io/badge/release-v3.1.0-blue)
@@ -19,7 +19,7 @@
 </div>
 
 > [!IMPORTANT]
-> **Detection & audit only — non-enforcing.** No BPF program returns `-EPERM`;
+> **Detection & audit only - non-enforcing.** No BPF program returns `-EPERM`;
 > no syscall is ever blocked. This is a runtime observation plane, not a
 > prevention plane. See [`docs/SECURITY.md`](docs/SECURITY.md) and [`THREAT_MODEL.md`](THREAT_MODEL.md).
 
@@ -29,12 +29,12 @@
 
 | | |
 |---|---|
-| 🎯 **Canary files** | Plant invisible paths in a kernel O(1) map — any touch fires a `CRITICAL` alert instantly, including openat2 and probes of nonexistent files |
+| 🎯 **Canary files** | Plant invisible paths in a kernel O(1) map - any touch fires a `CRITICAL` alert instantly, including openat2 and probes of nonexistent files |
 | 🛡️ **Evasion-resistant** | `openat2` hooked · `unshare(CLONE_NEWUSER)` escalates to `CRITICAL` · self-exclusion is PID-based (unspoofable via `prctl`) · `release_agent` matched anywhere under `/sys/fs/cgroup/` |
-| 🧠 **BPF LSM mode** | On kernels with `bpf` in the active LSM list, `lsm/file_open` classifies **kernel-resolved** paths (`bpf_d_path`) — io_uring opens and user-string races closed in one step; falls back to tracepoints automatically |
+| 🧠 **BPF LSM mode** | On kernels with `bpf` in the active LSM list, `lsm/file_open` classifies **kernel-resolved** paths (`bpf_d_path`) - io_uring opens and user-string races closed in one step; falls back to tracepoints automatically |
 | 🌐 **Full-stack network vision** | IPv4 **and** IPv6 connects with configurable suspicious-port severity |
 | 📈 **Observability built-in** | Hand-rolled Prometheus `/metrics` (zero deps), `Sensor_Heartbeat` synthetic alerts for SIEM silence detection, `degraded`/`last_err` health fields |
-| 🏥 **Self-healing** | systemd `Type=notify` + `WatchdogSec=30` and K8s liveness probes on a 10s heartbeat — a hung sensor restarts itself (verified live with SIGSTOP) |
+| 🏥 **Self-healing** | systemd `Type=notify` + `WatchdogSec=30` and K8s liveness probes on a 10s heartbeat - a hung sensor restarts itself (verified live with SIGSTOP) |
 | 🔐 **Least-privilege deployment** | `privileged: false` + `CAP_BPF/PERFMON/SYS_ADMIN` only, seccomp `RuntimeDefault`, Secrets for SIEM tokens, `system-node-critical` priority |
 | ⚡ **Fast and small** | ~0.7% idle CPU, **0 ring-buffer drops at 25,000 forks**, 33–43 MB RSS, zero-dependency Go daemon |
 | 📤 **SIEM-native** | JSON · ECS 8.11 · OCSF 1.3.0 · CEF · LEEF 2.0 → file/stdout/syslog/HTTPS-webhook (Splunk HEC) with batching, retry and circuit breaker |
@@ -58,15 +58,15 @@ Requirements: kernel ≥ 5.15 with `CONFIG_DEBUG_INFO_BTF` (`/sys/kernel/btf/vml
 
 ---
 
-## 📡 Detection Coverage — 19 actions
+## 📡 Detection Coverage - 19 actions
 
 | # | Action | Severity | MITRE | Hook |
 |--:|--------|----------|-------|------|
-| 1 | `Container_Namespace_Unshare` | ![HIGH](https://img.shields.io/badge/-HIGH-important?style=flat-square) | T1611 | kprobe `__x64_sys_unshare` — `CLONE_NEWUSER` escalates to ![CRITICAL](https://img.shields.io/badge/-CRITICAL-critical?style=flat-square) |
+| 1 | `Container_Namespace_Unshare` | ![HIGH](https://img.shields.io/badge/-HIGH-important?style=flat-square) | T1611 | kprobe `__x64_sys_unshare` - `CLONE_NEWUSER` escalates to ![CRITICAL](https://img.shields.io/badge/-CRITICAL-critical?style=flat-square) |
 | 2 | `Container_Pivot_Root_Escape` | ![CRITICAL](https://img.shields.io/badge/-CRITICAL-critical?style=flat-square) | T1611 | kprobe `__x64_sys_pivot_root` |
 | 3 | `Sensitive_File_Access` | ![HIGH](https://img.shields.io/badge/-HIGH-important?style=flat-square) | T1003.008 | `/etc/shadow` · runtime sockets (docker/containerd/crio/k3s) |
 | 4 | `Process_Execution` | ![INFO](https://img.shields.io/badge/-INFO-8A8A8A?style=flat-square) | T1059.004 | `sys_enter_execve` |
-| 5 | `Network_Connection` | ![INFO](https://img.shields.io/badge/-INFO-8A8A8A?style=flat-square)/![HIGH](https://img.shields.io/badge/-HIGH-important?style=flat-square) | T1071 | `sys_enter_connect` — **IPv4 + IPv6**, configurable suspicious ports |
+| 5 | `Network_Connection` | ![INFO](https://img.shields.io/badge/-INFO-8A8A8A?style=flat-square)/![HIGH](https://img.shields.io/badge/-HIGH-important?style=flat-square) | T1071 | `sys_enter_connect` - **IPv4 + IPv6**, configurable suspicious ports |
 | 6 | `Process_Injection` | ![HIGH](https://img.shields.io/badge/-HIGH-important?style=flat-square) | T1055.008 | `sys_enter_ptrace` |
 | 7 | `Log_Tampering` | ![HIGH](https://img.shields.io/badge/-HIGH-important?style=flat-square) | T1562.001 | `unlinkat` · `truncate` · `rename`/`renameat`/`renameat2` · write-intent opens (`O_TRUNC`/`O_WRONLY`) |
 | 8 | `Ebpf_Tampering` | ![HIGH](https://img.shields.io/badge/-HIGH-important?style=flat-square) | T1562.001 | `sys_enter_bpf` (load/attach/link cmds) |
@@ -77,14 +77,14 @@ Requirements: kernel ≥ 5.15 with `CONFIG_DEBUG_INFO_BTF` (`/sys/kernel/btf/vml
 | 13 | `Executable_Memory` | ![MEDIUM](https://img.shields.io/badge/-MEDIUM-dfb317?style=flat-square) | T1620 | `sys_enter_mprotect` (PROT_EXEC) *(suppressed by default)* |
 | 14 | `Core_Pattern_Modification` | ![CRITICAL](https://img.shields.io/badge/-CRITICAL-critical?style=flat-square) | T1611 | `core_pattern` · `modprobe` · `uevent_helper` |
 | 15 | `Cgroup_Release_Agent` | ![CRITICAL](https://img.shields.io/badge/-CRITICAL-critical?style=flat-square) | T1611 | any `release_agent`/`notify_on_release` under `/sys/fs/cgroup/` |
-| 16 | `Canary_Triggered` | ![CRITICAL](https://img.shields.io/badge/-CRITICAL-critical?style=flat-square) | T1552.001 | canary map hit — fires even for nonexistent paths |
-| 17 | `Memfd_Create` | ![MEDIUM](https://img.shields.io/badge/-MEDIUM-dfb317?style=flat-square) | T1055.012 | `sys_enter_memfd_create` — fileless payloads |
-| 18 | `Execveat` | ![MEDIUM](https://img.shields.io/badge/-MEDIUM-dfb317?style=flat-square) | T1620 | `sys_enter_execveat` — fd/memfd execution |
+| 16 | `Canary_Triggered` | ![CRITICAL](https://img.shields.io/badge/-CRITICAL-critical?style=flat-square) | T1552.001 | canary map hit - fires even for nonexistent paths |
+| 17 | `Memfd_Create` | ![MEDIUM](https://img.shields.io/badge/-MEDIUM-dfb317?style=flat-square) | T1055.012 | `sys_enter_memfd_create` - fileless payloads |
+| 18 | `Execveat` | ![MEDIUM](https://img.shields.io/badge/-MEDIUM-dfb317?style=flat-square) | T1620 | `sys_enter_execveat` - fd/memfd execution |
 | 19 | `Kernel_Module_Load` | ![HIGH](https://img.shields.io/badge/-HIGH-important?style=flat-square) | T1547.006 | `sys_enter_init_module` + `finit_module` |
 
 **Two detection classes** for the file-path rules (actions 3, 14, 15, 16):
 
-- **Attempt-based** (canary, release_agent) → always on the `open`/`openat`/`openat2` tracepoints: they fire at syscall entry even when the target file doesn't exist — and on cgroup-v2 hosts, probing for `release_agent` *is* the attack.
+- **Attempt-based** (canary, release_agent) → always on the `open`/`openat`/`openat2` tracepoints: they fire at syscall entry even when the target file doesn't exist - and on cgroup-v2 hosts, probing for `release_agent` *is* the attack.
 - **Resolved-path** (shadow, sockets, kernel-helpers, log writes) → owned by `lsm/file_open` when the kernel's active LSM list includes `bpf` (kernel-resolved path via `bpf_d_path`, io_uring opens included), tracepoints otherwise. Exactly one event per open either way.
 
 ---
@@ -153,7 +153,7 @@ max_bytes   = 52428800
 max_backups = 5
 
 [filter]
-comm_allowlist   = []               # noise filter only — NOT self-protection
+comm_allowlist   = []               # noise filter only - NOT self-protection
 cgroup_allowlist = []
 canary_paths     = ["/var/run/secrets/kubernetes.io/serviceaccount/token"]
 
@@ -182,7 +182,7 @@ target = "file"                     # file | stdout | syslog | webhook
 
 [output.webhook]
 url         = "https://splunk.internal:8088/services/collector/event"
-auth_header = "Splunk ${SPLUNK_HEC_TOKEN}"   # env-expanded — secrets stay out of files
+auth_header = "Splunk ${SPLUNK_HEC_TOKEN}"   # env-expanded - secrets stay out of files
 splunk_hec  = true
 ```
 
@@ -194,7 +194,7 @@ Environment overrides include `EDR_CONFIG`, `EDR_LOG_PATH`, `EDR_MODE`, `EDR_WEB
 
 ## 📈 Observability
 
-**Prometheus `/metrics`** (no client_golang — hand-rolled exposition, atomic reads):
+**Prometheus `/metrics`** (no client_golang - hand-rolled exposition, atomic reads):
 
 ```
 ebpf_edr_build_info{version="3.1.0",event_version="4"}
@@ -205,7 +205,7 @@ ebpf_edr_sink_sent|failed|dropped|retries_total · sink_queue · sink_circuit_op
 ebpf_edr_logging_degraded · ebpf_edr_uptime_seconds
 ```
 
-**Sensor silence detection** — `[sensor] heartbeat_event = true` ships a synthetic
+**Sensor silence detection** - `[sensor] heartbeat_event = true` ships a synthetic
 `Sensor_Heartbeat` INFO alert every health tick; alert on its *absence* in the SIEM
 (no heartbeat from a host in N minutes = dead, muted, or cut-off sensor). On by
 default in the Kubernetes deployments.
@@ -235,7 +235,7 @@ helm install ebpf-edr ./deploy/helm/ebpf-edr -n ebpf-edr --create-namespace \
 ```
 
 The token lives in a **Secret** (`secret.yaml` template or `secret.existingSecret`),
-injected as `SPLUNK_HEC_TOKEN` and expanded at load time — never rendered into the
+injected as `SPLUNK_HEC_TOKEN` and expanded at load time - never rendered into the
 ConfigMap. Pod security: `privileged: false`, capabilities `BPF+PERFMON+SYS_ADMIN`
 only, seccomp `RuntimeDefault`, read-only rootfs, `system-node-critical` priority,
 `checksum/config` rollout annotation, and liveness/readiness exec probes on the
@@ -243,7 +243,7 @@ daemon's heartbeat file. Raw manifests: `make k8s-apply` (namespace included).
 
 systemd path (`install.sh`): `Type=notify` + `WatchdogSec=30`, `OOMScoreAdjust=-500`,
 syscall allow-list (`@system-service @mount bpf perf_event_open`), address-family
-restriction, `ProtectSystem=strict` & friends — `systemd-analyze security` exposure **2.7**.
+restriction, `ProtectSystem=strict` & friends - `systemd-analyze security` exposure **2.7**.
 
 ---
 
@@ -254,7 +254,7 @@ sudo -E make verify                       # 15 core + 2 SIEM stages
 EDR_VERIFY_DESTRUCTIVE=1 sudo -E make verify   # + container smoke test (wipes Docker!)
 ```
 
-Latest full run — **v3.1.0 on kernel `6.12.111+deb13-amd64` (Debian 13)**:
+Latest full run - **v3.1.0 on kernel `6.12.111+deb13-amd64` (Debian 13)**:
 
 - **97 PASS / 3 WARN / 0 FAIL** core + **7 PASS / 0 FAIL** SIEM
   (WARNs: intentional Docker-stage opt-in notice ×2, synthetic-workload CPU note)
@@ -265,7 +265,7 @@ Latest full run — **v3.1.0 on kernel `6.12.111+deb13-amd64` (Debian 13)**:
 - Production: `[-] lsm/file_open attached` in the journal, `/metrics` live
 
 CI gates every push (build, vet, race detector, fuzz smoke tests, kernel
-build, emulation module). The runtime suite above runs on a kernel host —
+build, emulation module). The runtime suite above runs on a kernel host -
 nothing ships without a green run there first.
 
 ---
@@ -278,7 +278,7 @@ Record a full feature walkthrough in one command ([asciinema](https://asciinema.
 sudo apt install asciinema            # recorder (Debian/Ubuntu)
 sudo asciinema rec -t "eBPF EDR v3.1.0 walkthrough" -c ./demo.sh docs/demo.cast
 
-# gif conversion — agg is not in Debian repos; use the official image
+# gif conversion - agg is not in Debian repos; use the official image
 # from GitHub Container Registry (bundled fonts, no local install):
 docker run --rm -u $(id -u):$(id -g) -v "$PWD:/data" ghcr.io/asciinema/agg docs/demo.cast docs/demo.gif
 ```
@@ -311,7 +311,7 @@ sudo asciinema rec -t "v3.1.0 full verification" my-test.cast
 | `make ci` / `clean` | Local CI gate / remove artifacts |
 
 Adversary harness runs require `EDR_EMULATION_CONFIRMED=1` (in-repo callers set
-it automatically) — it fires real syscalls and belongs on disposable hosts.
+it automatically) - it fires real syscalls and belongs on disposable hosts.
 
 ---
 
@@ -335,19 +335,19 @@ it automatically) — it fires real syscalls and belongs on disposable hosts.
 
 | Phase | Status | Shipped |
 |-------|--------|---------|
-| **A — Correctness & anti-evasion** | ✅ v3.0.0 | openat2 hook · PID self-exclusion · ringbuf hygiene · failure-mode hardening |
-| **B — Least-privilege deployment** | ✅ v3.0.0 | caps-not-privileged · Secrets · probes/watchdog · exposure 2.7 |
-| **C — Observability** | ✅ v3.0.0 | `/metrics` · sensor heartbeats · `degraded`/`last_err` |
-| **D — Detection strength** | ✅ v3.1.0 | BPF LSM resolved paths · IPv6 (wire v4) · fileless & module actions · log-tamper v2 · suffix scan |
-| E — Depth & supply chain | 📋 next | io_uring_setup · UDP sendto/sendmsg · per-cgroup rate fairness · SBOM + cosign · golangci-lint/govulncheck |
+| **A - Correctness & anti-evasion** | ✅ v3.0.0 | openat2 hook · PID self-exclusion · ringbuf hygiene · failure-mode hardening |
+| **B - Least-privilege deployment** | ✅ v3.0.0 | caps-not-privileged · Secrets · probes/watchdog · exposure 2.7 |
+| **C - Observability** | ✅ v3.0.0 | `/metrics` · sensor heartbeats · `degraded`/`last_err` |
+| **D - Detection strength** | ✅ v3.1.0 | BPF LSM resolved paths · IPv6 (wire v4) · fileless & module actions · log-tamper v2 · suffix scan |
+| E - Depth & supply chain | 📋 next | io_uring_setup · UDP sendto/sendmsg · per-cgroup rate fairness · SBOM + cosign · golangci-lint/govulncheck |
 
 ---
 
 ## 🤝 Contributing & Security
 
-Contributions follow [`CONTRIBUTING.md`](CONTRIBUTING.md) — `make ci` must pass
+Contributions follow [`CONTRIBUTING.md`](CONTRIBUTING.md) - `make ci` must pass
 locally before any PR. Vulnerability disclosure: see [`SECURITY.md`](SECURITY.md).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).
