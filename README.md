@@ -62,9 +62,11 @@ Actions 9 and 13 are attached but kernel side suppressed by default via
 `disabled_actions` in `config.toml`. Log tampering additionally covers
 `truncate`, `rename`/`renameat`/`renameat2`, and write-intent opens
 (`O_TRUNC`/`O_WRONLY`) of the EDR log. When the kernel's active LSM list
-includes `bpf`, `lsm/file_open` takes over file-path detection with
-resolved kernel paths (io_uring opens included) and the open tracepoints
-go passive to avoid duplicate events.
+includes `bpf`, `lsm/file_open` owns the resolved-path classes (shadow,
+runtime sockets, kernel-helper files, log writes — io_uring opens
+included), while attempt-based classes (canary, release_agent) stay on
+the open/openat/openat2 tracepoints, which fire even when the target
+file does not exist.
 
 ## Architecture
 

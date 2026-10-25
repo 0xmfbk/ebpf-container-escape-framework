@@ -13,8 +13,12 @@ one architectural step:
   `sys_enter_openat` tracepoint)
 - the user-space filename race (TOCTOU between string copy and resolution)
 
-On successful attach the open tracepoints go passive (kernel-side
-`file_hook_lsm` flag), so every file event is emitted exactly once. The
+On successful attach the open tracepoints hand over the resolved-path
+classes (shadow, runtime sockets, kernel-helper files, log writes) to the
+LSM so every such event is emitted exactly once. Attempt-based classes
+(canary, release_agent) stay on the tracepoints by design: the LSM hook
+only fires for opens that succeed path resolution, and on cgroup v2 hosts
+probing for a nonexistent `release_agent` **is** the attack signal. The
 program is audit-only and always returns 0. Kernels without BPF LSM keep
 the v3.0.0 tracepoint behavior — load-time probing and fallback are fully
 automatic (`[-] lsm/file_open attached` vs

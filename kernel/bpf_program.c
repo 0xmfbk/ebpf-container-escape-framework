@@ -63,9 +63,10 @@ struct {
 } self_tgid SEC(".maps");
 
 /* Set to 1 by userspace after lsm/file_open attaches successfully. While
- * set, the open/openat/openat2 tracepoints stay passive: the LSM hook
- * sees the RESOLVED path for every open (including io_uring-driven ones)
- * and would otherwise duplicate each file event. */
+ * set, the open tracepoints emit only the attempt-based classes (canary,
+ * release_agent); the LSM hook owns the resolved-path classes and would
+ * otherwise duplicate those events. Attempt-based classes never move:
+ * the LSM cannot see opens that fail path resolution. */
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __uint(max_entries, 1);
@@ -284,22 +285,31 @@ struct trace_event_raw_sys_enter_openat2 {
     __s64 size;
 };
 
-/* Shared classifier for file paths: canary map first, then static
- * families. flags are open(2)-style and drive write-intent detection
- * for EDR-log tampering (O_WRONLY/O_RDWR/O_TRUNC). Prefix matches are
- * intentional (see the helpers). */
-static __always_inline __u32 classify_path(const char *path, __u64 flags)
+/* Attempt-based classes: the ATTEMPT is the signal — the target may not
+ * even exist (release_agent on cgroup v2 hosts, probed canary paths).
+ * These always run on the open/openat/openat2 tracepoints, which fire at
+ * syscall entry regardless of resolution; the LSM hook cannot see them
+ * because security_file_open only runs after a successful open. */
+static __always_inline __u32 classify_attempt_path(const char *path)
 {
     if (bpf_map_lookup_elem(&canary_paths, path))
         return ACTION_CANARY_TRIGGERED;
+    if (is_cgroup_release_agent_path(path))
+        return ACTION_CGROUP_RELEASE_AGENT;
+    return 0;
+}
+
+/* Resolved-path classes: targets that exist on real systems. When
+ * lsm/file_open is attached it owns these (kernel-resolved path, io_uring
+ * opens included); the tracepoints take over unchanged when it is not. */
+static __always_inline __u32 classify_resolved_path(const char *path, __u64 flags)
+{
     if (is_edr_log_path(path) && has_write_intent(flags))
         return ACTION_LOG_TAMPERING;
     if (is_shadow_path(path) || is_container_runtime_socket_path(path))
         return ACTION_SENSITIVE_FILE_ACCESS;
     if (is_kernel_helper_path(path))
         return ACTION_CORE_PATTERN_MODIFICATION;
-    if (is_cgroup_release_agent_path(path))
-        return ACTION_CGROUP_RELEASE_AGENT;
     return 0;
 }
 
@@ -316,18 +326,21 @@ static __always_inline int emit_path_event(__u32 action, const char *path)
     return 0;
 }
 
-/* Tracepoint entry for user-supplied paths (open family). Passes through
- * when the LSM hook owns file detection. */
+/* Tracepoint entry for user-supplied paths (open family). Attempt-based
+ * classes always run here; resolved-path classes run here only when the
+ * LSM hook is not attached (see classify_resolved_path). */
 static __always_inline int handle_open_path(const char *filename, __u64 flags)
 {
     __u32 zero = 0;
     __u32 *lsm = bpf_map_lookup_elem(&file_hook_lsm, &zero);
-    if (lsm && *lsm)
-        return 0;
+    int lsm_active = (lsm && *lsm) != 0;
     char path[MAX_FILENAME_LEN] = {};
     if (bpf_probe_read_user_str(path, sizeof(path), filename) < 0)
         return 0;
-    return emit_path_event(classify_path(path, flags), path);
+    __u32 action = classify_attempt_path(path);
+    if (!action && !lsm_active)
+        action = classify_resolved_path(path, flags);
+    return emit_path_event(action, path);
 }
 
 SEC("tracepoint/syscalls/sys_enter_openat")
@@ -685,7 +698,7 @@ int trace_mprotect(struct trace_event_raw_sys_enter_mprotect *ctx)
 /* ================== NEW: log tampering v2 (Phase D) ================== */
 /* unlinkat only caught deletion; wiping or moving the audit log via
  * truncate / rename / renameat / renameat2 evaded detection. Write-intent
- * opens of the log are caught by classify_path above. */
+ * opens of the log are caught by classify_resolved_path above. */
 
 struct trace_event_raw_sys_enter_truncate {
     __u16 common_type;
@@ -878,6 +891,9 @@ int trace_finit_module(struct trace_event_raw_sys_enter_finit_module *ctx)
  * user-space filename race in one architectural step. Requires kernel
  * with CONFIG_BPF_LSM and bpf in the active LSM list; userspace deletes
  * this section before load when unavailable (see main.go).
+ * Scope: resolved-path classes only (see classify_resolved_path) —
+ * attempt-based classes (canary, release_agent) stay on the tracepoints,
+ * because this hook never fires for opens that fail resolution.
  * AUDIT-ONLY: always returns 0 — this sensor never denies an open. */
 SEC("lsm/file_open")
 int BPF_PROG(lsm_file_open, struct file *file)
@@ -889,7 +905,7 @@ int BPF_PROG(lsm_file_open, struct file *file)
     __u32 fflags = 0;
     if (bpf_core_read(&fflags, sizeof(fflags), &file->f_flags) != 0)
         return 0;
-    emit_path_event(classify_path(path, (__u64)fflags), path);
+    emit_path_event(classify_resolved_path(path, (__u64)fflags), path);
     return 0;
 }
 
