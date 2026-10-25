@@ -25,10 +25,23 @@ die()  { printf '[setup] ERROR: %s\n' "$*" >&2; exit 1; }
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# Download staging dir. A RETURN-scoped trap referencing a function local
+# races bash's local teardown under set -u ("tmp: unbound variable"), so
+# cleanup runs via a global plus the EXIT trap as a backstop.
+GO_TMP=""
+cleanup_go_tmp() {
+    if [[ -n "${GO_TMP:-}" ]]; then
+        rm -rf "$GO_TMP" 2>/dev/null || true
+        GO_TMP=""
+    fi
+}
+trap cleanup_go_tmp EXIT
+
 go_bin() {
-    # Prefer a go on PATH, then a stock /usr/local/go install.
-    if have go; then command -v go
-    elif [[ -x /usr/local/go/bin/go ]]; then echo /usr/local/go/bin/go
+    # Prefer the toolchain this script installs (/usr/local/go) over an
+    # older distro go that may also be on PATH (e.g. Debian's 1.24).
+    if [[ -x /usr/local/go/bin/go ]]; then echo /usr/local/go/bin/go
+    elif have go; then command -v go
     else return 1
     fi
 }
@@ -125,7 +138,7 @@ install_apt_pkgs() {
 install_go_tarball() {
     # Install the current stable official toolchain into /usr/local/go.
     # The JSON listing carries the sha256 we verify against.
-    local json ver arch sha url tmp
+    local json ver arch sha url
     arch="$(uname -m)"
     case "$arch" in
         x86_64) arch=amd64 ;;
@@ -139,25 +152,29 @@ install_go_tarball() {
     sha="$(printf '%s' "$json" | grep -A6 "\"${ver}.linux-${arch}.tar.gz\"" \
         | grep -o '"sha256": *"[0-9a-f]*"' | head -1 | grep -o '[0-9a-f]\{64\}')"
     url="https://go.dev/dl/${ver}.linux-${arch}.tar.gz"
-    tmp="$(mktemp -d)"
-    trap 'rm -rf "$tmp"' RETURN
+    GO_TMP="$(mktemp -d)"
     log "downloading $url"
-    curl -fsSL -o "$tmp/go.tgz" "$url" || return 1
+    curl -fsSL -o "${GO_TMP}/go.tgz" "$url" || return 1
     if [[ -n "$sha" ]]; then
-        echo "$sha  $tmp/go.tgz" | sha256sum -c - >/dev/null \
+        echo "$sha  ${GO_TMP}/go.tgz" | sha256sum -c - >/dev/null \
             || { warn "Go tarball sha256 mismatch; aborting tarball install"; return 1; }
         log "sha256 verified"
     else
         warn "could not extract sha256 from go.dev; continuing unverified"
     fi
     rm -rf /usr/local/go
-    tar -C /usr/local -xzf "$tmp/go.tgz"
+    tar -C /usr/local -xzf "${GO_TMP}/go.tgz"
+    cleanup_go_tmp
+    # /usr/local/bin precedes /usr/bin in the default PATH, so these
+    # symlinks make the fresh toolchain win over an older distro go.
+    ln -sf /usr/local/go/bin/go /usr/local/bin/go
+    ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
     cat > /etc/profile.d/golang.sh <<'EOF'
 # Added by ebpf-edr setup_dev_env.sh
 export PATH="$PATH:/usr/local/go/bin"
 EOF
     chmod 0644 /etc/profile.d/golang.sh
-    log "Go $ver installed to /usr/local/go (PATH via /etc/profile.d/golang.sh)"
+    log "Go $ver installed to /usr/local/go (symlinked into /usr/local/bin)"
 }
 
 install_go() {
@@ -185,6 +202,10 @@ main() {
     if (( CHECK_ONLY )); then
         if (( ${#missing[@]} )); then
             warn "missing build tools: ${missing[*]}  (fix with: sudo make deps)"
+            local g
+            if g="$(go_bin 2>/dev/null)"; then
+                warn "go resolved to: $g ($("$g" version 2>/dev/null || echo version query failed)); project needs >= go$GO_MIN"
+            fi
         else
             log "toolchain: complete"
         fi

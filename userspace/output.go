@@ -262,13 +262,14 @@ func (s *networkSink) worker() {
 func (s *networkSink) deliver(batch []Envelope) {
 	ctx := context.Background()
 	delay := s.cfg.RetryBase
+	var err error
 
 	for attempt := 0; attempt < s.cfg.MaxRetries; attempt++ {
 		if s.circuitOpen.Load() {
 			atomic.AddUint64(&s.dropped, uint64(len(batch)))
 			return
 		}
-		err := s.transport.SendBatch(ctx, batch)
+		err = s.transport.SendBatch(ctx, batch)
 		if err == nil {
 			atomic.AddUint64(&s.sent, uint64(len(batch)))
 			s.consecutive.Store(0)

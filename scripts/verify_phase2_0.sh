@@ -230,8 +230,11 @@ stage_load() {
         done
         info "verifier: ok=$ok bad=$bad"
     fi
+    # Lazy unmount returns before the detach completes; give it a beat
+    # and never fail the stage on the ensuing EBUSY race.
     umount -l "$pin" 2>/dev/null || true
-    rm -rf "$pin"
+    sleep 0.2
+    rm -rf "$pin" 2>/dev/null || true
 }
 
 stage_runtime() {
