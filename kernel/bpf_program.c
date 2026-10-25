@@ -51,37 +51,28 @@ struct {
     __type(value, __u32);
 } canary_paths SEC(".maps");
 
+/* Daemon self-exclusion. Userspace publishes its own tgid here at startup
+ * so the sensor's own bpf()/map activity does not self-alert. Unlike a
+ * comm-based allowlist this cannot be spoofed via prctl(PR_SET_NAME).
+ * Value 0 disables the check. */
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u32);
+} self_tgid SEC(".maps");
+
 /* ================== Helpers ================== */
-
-static __always_inline __u32 current_ppid(void)
-{
-    struct task_struct *task = (struct task_struct *)bpf_get_current_task_btf();
-    if (!task)
-        return 0;
-    struct task_struct *parent = NULL;
-    if (bpf_core_read(&parent, sizeof(parent), &task->real_parent))
-        return 0;
-    if (!parent)
-        return 0;
-    __u32 ppid = 0;
-    if (bpf_core_read(&ppid, sizeof(ppid), &parent->tgid))
-        return 0;
-    return ppid;
-}
-
-static __always_inline __u64 current_start_time_ns(void)
-{
-    struct task_struct *task = (struct task_struct *)bpf_get_current_task_btf();
-    if (!task)
-        return 0;
-    __u64 t = 0;
-    if (bpf_core_read(&t, sizeof(t), &task->start_boottime))
-        return 0;
-    return t;
-}
 
 static __always_inline int is_filtered(void)
 {
+    /* Self-exclusion by tgid first: the loaded daemon publishes its tgid
+     * in self_tgid. An attacker cannot acquire the daemon's tgid, unlike
+     * a comm name which is settable with prctl(PR_SET_NAME). */
+    __u32 zero = 0;
+    __u32 *self = bpf_map_lookup_elem(&self_tgid, &zero);
+    if (self && *self && (__u32)(bpf_get_current_pid_tgid() >> 32) == *self)
+        return 1;
     char comm[MAX_COMM_LEN] = {};
     bpf_get_current_comm(&comm, sizeof(comm));
     if (bpf_map_lookup_elem(&comm_allowlist, comm))
@@ -94,23 +85,43 @@ static __always_inline int is_filtered(void)
 
 static __always_inline struct event_t *event_alloc(__u32 action_id)
 {
-    if (is_filtered())
-        return NULL;
+    /* Cheapest gate first: a disabled action short-circuits before any
+     * per-event filter work (comm read + two hash lookups). This matters
+     * on the hot openat/mprotect hooks when an action is disabled. */
     __u32 *en = bpf_map_lookup_elem(&action_enabled, &action_id);
     if (!en || !*en)
         return NULL;
-    return bpf_ringbuf_reserve(&events, sizeof(struct event_t), 0);
+    if (is_filtered())
+        return NULL;
+    struct event_t *e = bpf_ringbuf_reserve(&events, sizeof(struct event_t), 0);
+    if (!e)
+        return NULL;
+    /* Reserved ringbuf memory is NOT zeroed. Without this memset, fields
+     * a hook does not set (filename, dest_ip, aux_*) carry stale bytes
+     * recycled from previously submitted events. */
+    __builtin_memset(e, 0, sizeof(*e));
+    return e;
 }
 
 static __always_inline void event_fill_common(struct event_t *e)
 {
+    struct task_struct *task = (struct task_struct *)bpf_get_current_task_btf();
     __u64 pid_tgid = bpf_get_current_pid_tgid();
+
     e->version       = EVENT_VERSION;
     e->cgroup_id     = bpf_get_current_cgroup_id();
     e->pid           = (__u32)(pid_tgid >> 32);
-    e->ppid          = current_ppid();
     e->uid           = bpf_get_current_uid_gid() & 0xFFFFFFFF;
-    e->start_time_ns = current_start_time_ns();
+
+    /* Single task fetch serves both ppid and start_boottime. On failure
+     * the fields stay zero (event was memset in event_alloc). */
+    if (task) {
+        struct task_struct *parent = NULL;
+        if (bpf_core_read(&parent, sizeof(parent), &task->real_parent) == 0 && parent)
+            bpf_core_read(&e->ppid, sizeof(e->ppid), &parent->tgid);
+        bpf_core_read(&e->start_time_ns, sizeof(e->start_time_ns), &task->start_boottime);
+    }
+
     bpf_get_current_comm(&e->comm, sizeof(e->comm));
 }
 
@@ -197,15 +208,45 @@ struct trace_event_raw_sys_enter_openat {
     __s64 mode;
 };
 
-SEC("tracepoint/syscalls/sys_enter_openat")
-int trace_openat(struct trace_event_raw_sys_enter_openat *ctx)
+struct trace_event_raw_sys_enter_open {
+    __u16 common_type;
+    __u8  common_flags;
+    __u8  common_preempt_count;
+    __u8  common_pid;
+    long int id;
+    const char *filename;
+    __s64 flags;
+    __s64 mode;
+};
+
+/* openat2(dfd, filename, how, size): same leading layout as openat, so
+ * filename sits at the same offset. Hooking it is required for coverage:
+ * without it, opening core_pattern/docker.sock/canaries via openat2
+ * (kernel 5.6+) would bypass every file rule below. `struct open_how`
+ * is a UAPI type not present in vmlinux.h; a pointer to the incomplete
+ * type is all we need since we never dereference it. */
+struct trace_event_raw_sys_enter_openat2 {
+    __u16 common_type;
+    __u8  common_flags;
+    __u8  common_preempt_count;
+    __u8  common_pid;
+    long int id;
+    __s64 dfd;
+    const char *filename;
+    struct open_how *how;
+    __s64 size;
+};
+
+/* Shared classifier for open/openat/openat2: canary map first, then the
+ * static path families. Prefix matches are intentional (see the helpers). */
+static __always_inline int handle_open_path(const char *filename)
 {
     char path[MAX_FILENAME_LEN] = {};
-    if (bpf_probe_read_user_str(path, sizeof(path), ctx->filename) < 0)
+    if (bpf_probe_read_user_str(path, sizeof(path), filename) < 0)
         return 0;
 
     __u32 action = 0;
-    
+
     // 1. Check Canary Map first (Highest priority)
     if (bpf_map_lookup_elem(&canary_paths, path)) {
         action = ACTION_CANARY_TRIGGERED;
@@ -220,7 +261,7 @@ int trace_openat(struct trace_event_raw_sys_enter_openat *ctx)
     else if (is_cgroup_release_agent_path(path)) {
         action = ACTION_CGROUP_RELEASE_AGENT;
     }
-    
+
     if (!action)
         return 0;
 
@@ -233,51 +274,22 @@ int trace_openat(struct trace_event_raw_sys_enter_openat *ctx)
     return 0;
 }
 
-struct trace_event_raw_sys_enter_open {
-    __u16 common_type;
-    __u8  common_flags;
-    __u8  common_preempt_count;
-    __u8  common_pid;
-    long int id;
-    const char *filename;
-    __s64 flags;
-    __s64 mode;
-};
+SEC("tracepoint/syscalls/sys_enter_openat")
+int trace_openat(struct trace_event_raw_sys_enter_openat *ctx)
+{
+    return handle_open_path(ctx->filename);
+}
 
 SEC("tracepoint/syscalls/sys_enter_open")
 int trace_open(struct trace_event_raw_sys_enter_open *ctx)
 {
-    char path[MAX_FILENAME_LEN] = {};
-    if (bpf_probe_read_user_str(path, sizeof(path), ctx->filename) < 0)
-        return 0;
+    return handle_open_path(ctx->filename);
+}
 
-    __u32 action = 0;
-    
-    // 1. Check Canary Map first (Highest priority)
-    if (bpf_map_lookup_elem(&canary_paths, path)) {
-        action = ACTION_CANARY_TRIGGERED;
-    }
-    // 2. Fallback to static checks
-    else if (is_shadow_path(path) || is_container_runtime_socket_path(path)) {
-        action = ACTION_SENSITIVE_FILE_ACCESS;
-    }
-    else if (is_kernel_helper_path(path)) {
-        action = ACTION_CORE_PATTERN_MODIFICATION;
-    }
-    else if (is_cgroup_release_agent_path(path)) {
-        action = ACTION_CGROUP_RELEASE_AGENT;
-    }
-    
-    if (!action)
-        return 0;
-
-    struct event_t *e = event_alloc(action);
-    if (!e) return 0;
-    event_fill_common(e);
-    e->action_id = action;
-    __builtin_memcpy(e->filename, path, sizeof(e->filename));
-    bpf_ringbuf_submit(e, 0);
-    return 0;
+SEC("tracepoint/syscalls/sys_enter_openat2")
+int trace_openat2(struct trace_event_raw_sys_enter_openat2 *ctx)
+{
+    return handle_open_path(ctx->filename);
 }
 
 /* ================== Process execution ================== */

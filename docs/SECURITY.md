@@ -22,8 +22,12 @@ ProtectControlGroups.
 
 ## Self-Protection
 
-- Daemon comm (ebpf_controller, ebpf-edr) is auto-added to the kernel
-  comm_allowlist, so the agent does not detect its own BPF syscalls.
+- The daemon publishes its own tgid into the kernel-side `self_tgid` map
+  at startup, so the agent does not alert on its own BPF/map syscalls.
+  Filtering is PID-based: a comm-based allowlist was removed because any
+  process could evade every rule via `prctl(PR_SET_NAME, "ebpf-edr")`.
+- `comm_allowlist` remains a user-configured noise filter only and must
+  not be relied on for self-protection.
 - trace_unlinkat fires on unlink of /var/log/ebpf_edr*, catching log
   tampering attempts.
 

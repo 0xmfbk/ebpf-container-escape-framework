@@ -37,7 +37,7 @@ Verified end to end on kernel 6.12.111 (82 PASS / 0 FAIL).
 |---|--------|----------|-------|------|
 | 1 | Container_Namespace_Unshare | HIGH | T1611 | kprobe/__x64_sys_unshare |
 | 2 | Container_Pivot_Root_Escape | CRITICAL | T1611 | kprobe/__x64_sys_pivot_root |
-| 3 | Sensitive_File_Access | HIGH | T1003.008 | tracepoint/sys_enter_openat + open |
+| 3 | Sensitive_File_Access | HIGH | T1003.008 | tracepoint/sys_enter_openat + open + openat2 |
 | 4 | Process_Execution | INFO/MEDIUM | T1059.004 | tracepoint/sys_enter_execve |
 | 5 | Network_Connection | INFO/HIGH | T1071 | tracepoint/sys_enter_connect |
 | 6 | Process_Injection | HIGH | T1055.008 | tracepoint/sys_enter_ptrace |
@@ -48,17 +48,18 @@ Verified end to end on kernel 6.12.111 (82 PASS / 0 FAIL).
 | 11 | Namespace_Switch | HIGH | T1611 | tracepoint/sys_enter_setns |
 | 12 | Chroot_Escape | HIGH | T1611 | tracepoint/sys_enter_chroot |
 | 13 | Executable_Memory | MEDIUM | T1620 | tracepoint/sys_enter_mprotect |
-| 14 | Core_Pattern_Modification | CRITICAL | T1611 | tracepoint/sys_enter_openat + open |
-| 15 | Cgroup_Release_Agent | CRITICAL | T1611 | tracepoint/sys_enter_openat + open |
-| 16 | Canary_Triggered | CRITICAL | T1552.001 | tracepoint/sys_enter_openat + open |
+| 14 | Core_Pattern_Modification | CRITICAL | T1611 | tracepoint/sys_enter_openat + open + openat2 |
+| 15 | Cgroup_Release_Agent | CRITICAL | T1611 | tracepoint/sys_enter_openat + open + openat2 |
+| 16 | Canary_Triggered | CRITICAL | T1552.001 | tracepoint/sys_enter_openat + open + openat2 |
 
 Actions 9 and 13 are attached but kernel side suppressed by default via
 `disabled_actions` in `config.toml`.
 
 ## Architecture
 
-Kernel hooks (14) feed a comm/cgroup filter, a canary_paths O(1) hash lookup,
-then an action_enabled lookup. Events are pushed to a 1 MiB ringbuf carrying 208 byte records.
+Kernel hooks (15) feed a PID-based self-exclusion plus comm/cgroup filter,
+a canary_paths O(1) hash lookup, then an action_enabled lookup. Events are
+pushed to a 1 MiB ringbuf carrying zero-initialized 208 byte records.
 Userspace reads into a fixed pooled buffer, applies a per action token bucket, enriches
 with process lineage and cgroup path, and K8s Pod metadata from bounded LRU caches, and routes
 through an Encoder + Sink to any destination.
@@ -206,6 +207,8 @@ Targets: `dropped` = 0, `ver_mismatch` = 0, `lineage_cache` under capacity.
 | Target | Purpose |
 |--------|---------|
 | `make kernel` | Build BPF object |
+| `make deps` | One-shot toolchain bootstrap (clang, libbpf, bpftool, Go) |
+| `make check-env` | Read-only toolchain + kernel suitability probe (incl. WSL2) |
 | `make userspace` | Build daemon |
 | `make emulation` | Build adversary harness |
 | `make test` | Go unit tests |

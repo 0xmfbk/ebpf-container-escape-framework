@@ -16,9 +16,11 @@ to the configured transport (file, stdout, syslog, or webhook).
 | Component | Type | Purpose |
 |-----------|------|---------|
 | events | ringbuf (1 MiB) | kernel to userspace transport |
-| comm_allowlist | hash (256) | drop events by process name |
+| comm_allowlist | hash (256) | drop events by process name (user noise filter) |
 | cgroup_allowlist | hash (1024) | drop events by cgroup ID |
 | action_enabled | array (32) | per action kernel side enable/disable |
+| canary_paths | hash (128) | O(1) exact-match canary lookup in open hooks |
+| self_tgid | array (1) | daemon self-exclusion by tgid (unspoofable) |
 
 ## Userspace Components
 

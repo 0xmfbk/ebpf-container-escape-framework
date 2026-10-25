@@ -105,7 +105,15 @@ systemd-reload:
 .PHONY: install install-dry uninstall test-attacks systemd-reload
 
 # ---- Phase 2.5 ----
-.PHONY: ci fuzz test-race test-all clean-backups
+.PHONY: ci fuzz test-race test-all clean-backups deps check-env
+
+# deps: one-shot toolchain bootstrap (clang, libbpf headers, bpftool, Go).
+# check-env: read-only probe of toolchain + kernel suitability (no sudo).
+deps:
+	@bash $(SCRIPTS_DIR)/setup_dev_env.sh
+
+check-env:
+	@bash $(SCRIPTS_DIR)/setup_dev_env.sh --check
 
 ci:
 	@bash scripts/ci.sh

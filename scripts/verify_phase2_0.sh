@@ -2,6 +2,11 @@
 # Phase 2.0 + 2.2 verification harness - ebpf-container-escape-framework
 set -uo pipefail
 
+# This harness runs the adversary emulation binary, which refuses to start
+# without an explicit opt-in. Running this script is that opt-in: it is
+# only ever run on a disposable test host.
+export EDR_EMULATION_CONFIRMED=1
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${ROOT}/verify_out"
 BPF_OBJ="${ROOT}/kernel/bpf_program.o"
@@ -737,6 +742,15 @@ stage_docker() {
         return
     fi
     pass "Docker image built successfully"
+
+    # The recovery block below removes ALL containers on this host and
+    # restarts the Docker daemon. Refuse to do that unless the operator
+    # explicitly opted in — on a shared machine this is data loss.
+    if [[ "${EDR_VERIFY_DESTRUCTIVE:-0}" != "1" ]]; then
+        warn "skipping destructive Docker recovery + container smoke test."
+        warn "re-run with EDR_VERIFY_DESTRUCTIVE=1 to allow 'docker rm -f' of ALL containers, 'pkill -9 runc' and 'systemctl restart docker' on this host."
+        return
+    fi
 
     info "Force-cleaning Docker daemon to recover from Stage 12 stress test..."
     # Kill stuck runc processes that freeze the kernel

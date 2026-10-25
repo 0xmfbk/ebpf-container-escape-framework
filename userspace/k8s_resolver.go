@@ -36,8 +36,9 @@ type KubeletPodList struct {
 }
 
 type K8sResolver struct {
-	mu    sync.RWMutex
-	cache map[string]K8sInfo // Key: ContainerID (without the "containerd://" prefix)
+	mu        sync.RWMutex
+	cache     map[string]K8sInfo // Key: ContainerID (without the "containerd://" prefix)
+	closeOnce sync.Once
 
 	client *http.Client
 	stop   chan struct{}
@@ -163,5 +164,7 @@ func (k *K8sResolver) Lookup(containerID string) (K8sInfo, bool) {
 }
 
 func (k *K8sResolver) Close() {
-	close(k.stop)
+	k.closeOnce.Do(func() {
+		close(k.stop)
+	})
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,8 +48,11 @@ type Transport interface {
 // ---------- file / stdout sink ----------
 
 type fileSink struct {
-	enc Encoder
-	w   io.Writer
+	enc          Encoder
+	w            io.Writer
+	written      uint64
+	encodeFailed uint64
+	writeFailed  uint64
 }
 
 func newFileSink(enc Encoder, w io.Writer) *fileSink {
@@ -58,23 +62,34 @@ func newFileSink(enc Encoder, w io.Writer) *fileSink {
 func (s *fileSink) Submit(a *SecurityAlert) {
 	payload, err := s.enc.Encode(a)
 	if err != nil {
+		atomic.AddUint64(&s.encodeFailed, 1)
 		return
 	}
 	// Preserve line-delimited output.
 	maxInt := int(^uint(0) >> 1)
 	if len(payload) >= maxInt {
+		atomic.AddUint64(&s.encodeFailed, 1)
 		return
 	}
 	line := make([]byte, 0, len(payload)+1)
 	line = append(line, payload...)
 	line = append(line, '\n')
-	_, _ = s.w.Write(line)
+	if _, err := s.w.Write(line); err != nil {
+		atomic.AddUint64(&s.writeFailed, 1)
+		return
+	}
+	atomic.AddUint64(&s.written, 1)
 }
 
 func (s *fileSink) Flush(timeout time.Duration) error { return nil }
 func (s *fileSink) Close() error                      { return nil }
-func (s *fileSink) Stats() SinkStats                  { return SinkStats{} }
-func (s *fileSink) Describe() string                  { return "file[" + s.enc.Name() + "]" }
+func (s *fileSink) Stats() SinkStats {
+	return SinkStats{
+		Sent:   atomic.LoadUint64(&s.written),
+		Failed: atomic.LoadUint64(&s.encodeFailed) + atomic.LoadUint64(&s.writeFailed),
+	}
+}
+func (s *fileSink) Describe() string { return "file[" + s.enc.Name() + "]" }
 
 // ---------- network sink (syslog / webhook) ----------
 
@@ -128,8 +143,12 @@ type networkSink struct {
 	dropped uint64
 	retries uint64
 
-	consecutive atomic.Int32
-	circuitOpen atomic.Bool
+	consecutive   atomic.Int32
+	circuitOpen   atomic.Bool
+	resetPending  atomic.Bool // a cooldown reset goroutine is scheduled
+	closed        atomic.Bool
+	inFlight      atomic.Int64
+	lastErrLog    atomic.Int64 // unix nanos of last "delivery failing" log
 }
 
 func newNetworkSink(enc Encoder, transport Transport, cfg NetworkSinkConfig) *networkSink {
@@ -150,6 +169,12 @@ func newNetworkSink(enc Encoder, transport Transport, cfg NetworkSinkConfig) *ne
 }
 
 func (s *networkSink) Submit(a *SecurityAlert) {
+	// Post-Close submits are counted as dropped instead of silently
+	// piling up in a channel whose workers have exited.
+	if s.closed.Load() {
+		atomic.AddUint64(&s.dropped, 1)
+		return
+	}
 	if s.circuitOpen.Load() {
 		atomic.AddUint64(&s.dropped, 1)
 		return
@@ -176,7 +201,9 @@ func (s *networkSink) worker() {
 		if len(batch) == 0 {
 			return
 		}
+		s.inFlight.Add(int64(len(batch)))
 		s.deliver(batch)
+		s.inFlight.Add(-int64(len(batch)))
 		batch = batch[:0]
 		total = 0
 	}
@@ -254,32 +281,51 @@ func (s *networkSink) deliver(batch []Envelope) {
 		}
 	}
 
+	// Persistent transport failures were previously invisible outside the
+	// periodic health line; surface them (rate-limited to once per 30s).
+	now := time.Now().UnixNano()
+	last := s.lastErrLog.Load()
+	if now-last > int64(30*time.Second) && s.lastErrLog.CompareAndSwap(last, now) {
+		log.Printf("[sink] transport %s delivery failing: %v (see sink_* health counters)", s.transport.Name(), err)
+	}
+
 	atomic.AddUint64(&s.failed, 1)
 	atomic.AddUint64(&s.dropped, uint64(len(batch)))
 	if s.consecutive.Add(1) >= s.cfg.CircuitThreshold {
-		s.circuitOpen.Store(true)
-		go func() {
-			time.Sleep(s.cfg.CircuitCooldown)
-			s.circuitOpen.Store(false)
-			s.consecutive.Store(0)
-		}()
+		// Open the breaker at most once per outage and schedule exactly
+		// one cooldown reset; overlapping resets previously could close
+		// the breaker early or clobber fresh failure counts.
+		if s.circuitOpen.CompareAndSwap(false, true) && s.resetPending.CompareAndSwap(false, true) {
+			go func() {
+				time.Sleep(s.cfg.CircuitCooldown)
+				s.circuitOpen.Store(false)
+				s.consecutive.Store(0)
+				s.resetPending.Store(false)
+			}()
+		}
 	}
 }
 
+// Flush blocks until the queue is empty and no batch is mid-delivery,
+// or the timeout expires. It reports an error (with what is still
+// outstanding) instead of always claiming success.
 func (s *networkSink) Flush(timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if len(s.queue) == 0 {
+	for {
+		if len(s.queue) == 0 && s.inFlight.Load() == 0 {
 			return nil
 		}
-		time.Sleep(50 * time.Millisecond)
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("%d queued, %d in flight after %v", len(s.queue), s.inFlight.Load(), timeout)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	return nil
 }
 
 func (s *networkSink) Close() error {
 	var err error
 	s.closeOnce.Do(func() {
+		s.closed.Store(true)
 		close(s.done)
 		done := make(chan struct{})
 		go func() {

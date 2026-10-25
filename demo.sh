@@ -19,7 +19,7 @@ echo -e "  \033[32m[OK]\033[0m EDR Engine active. Monitoring kernel syscalls..."
 echo -e "\n\033[1;36m=== 2. Simulating Advanced Adversary Attack ===\033[0m"
 sleep 1
 # Run the adversary emulation (triggers pivot_root, core_pattern, etc.)
-sudo ./emulation/adversary > /dev/null 2>&1
+sudo EDR_EMULATION_CONFIRMED=1 ./emulation/adversary > /dev/null 2>&1
 echo -e "  \033[32m[OK]\033[0m Container escape attempts simulated."
 
 echo -e "\n\033[1;36m=== 3. Triggering eBPF Canary File ===\033[0m"

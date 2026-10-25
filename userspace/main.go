@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -228,9 +229,11 @@ func main() {
 		cfgPath, loaded.Mode, loaded.Log.Level, loaded.Log.Path,
 		loaded.Rates.EventsPerSec, loaded.Rates.Burst)
 
-	loaded.Filter.CommAllowlist = appendUnique(loaded.Filter.CommAllowlist, "ebpf_controller")
-	loaded.Filter.CommAllowlist = appendUnique(loaded.Filter.CommAllowlist, "ebpf-edr")
-	setConfig(loaded)
+	// Self-exclusion is PID-based: main() publishes its tgid into the
+	// self_tgid BPF map after load. The former comm-based auto-allowlist
+	// ("ebpf-edr"/"ebpf_controller") was spoofable via prctl(PR_SET_NAME)
+	// and is deliberately not used anymore; comm_allowlist remains a
+	// user-configured filter only.
 
 	var (
 		rotLogger io.Closer
@@ -306,6 +309,7 @@ func main() {
 		ProgPivotRoot *ebpf.Program `ebpf:"trace_pivot_root"`
 		ProgOpenat    *ebpf.Program `ebpf:"trace_openat"`
 		ProgOpen      *ebpf.Program `ebpf:"trace_open"`
+		ProgOpenat2   *ebpf.Program `ebpf:"trace_openat2"`
 		ProgExecve    *ebpf.Program `ebpf:"trace_execve"`
 		ProgConnect   *ebpf.Program `ebpf:"trace_connect"`
 		ProgPtrace    *ebpf.Program `ebpf:"trace_ptrace"`
@@ -321,6 +325,7 @@ func main() {
 		CgAllow       *ebpf.Map     `ebpf:"cgroup_allowlist"`
 		ActionEnabled *ebpf.Map     `ebpf:"action_enabled"`
 		CanaryPaths   *ebpf.Map     `ebpf:"canary_paths"`
+		SelfTgid      *ebpf.Map     `ebpf:"self_tgid"`
 	}
 	if err := spec.LoadAndAssign(&objs, nil); err != nil {
 		log.Fatalf("load objects: %v", err)
@@ -329,6 +334,7 @@ func main() {
 	defer objs.ProgPivotRoot.Close()
 	defer objs.ProgOpenat.Close()
 	defer objs.ProgOpen.Close()
+	defer objs.ProgOpenat2.Close()
 	defer objs.ProgExecve.Close()
 	defer objs.ProgConnect.Close()
 	defer objs.ProgPtrace.Close()
@@ -344,6 +350,7 @@ func main() {
 	defer objs.CgAllow.Close()
 	defer objs.ActionEnabled.Close()
 	defer objs.CanaryPaths.Close()
+	defer objs.SelfTgid.Close()
 
 	if err := populateFilterMaps(objs.CommAllow, objs.CgAllow, loaded); err != nil {
 		log.Fatalf("populate filter maps: %v", err)
@@ -353,6 +360,11 @@ func main() {
 	}
 	if err := populateActionEnabled(objs.ActionEnabled, loaded); err != nil {
 		log.Fatalf("populate action_enabled: %v", err)
+	}
+	// Publish our tgid so kernel-side self-exclusion works. os.Getpid()
+	// equals the tgid the kernel sees for this process.
+	if err := objs.SelfTgid.Put(uint32(0), uint32(os.Getpid())); err != nil {
+		log.Fatalf("publish self tgid: %v", err)
 	}
 	log.Printf("[-] filter maps: comm=%d cgroup=%d disabled_actions=%d",
 		len(loaded.Filter.CommAllowlist), len(loaded.Filter.CgroupAllowlist),
@@ -364,11 +376,12 @@ func main() {
 		}
 	}
 	var (
-		kpUnshare, kpPivot                 link.Link
-		tpOpenat, tpOpen, tpExecve, tpConn link.Link
-		tpPtrace, tpUnlinkat               link.Link
-		tpBPF, tpPerf, tpMount, tpSetns    link.Link
-		tpChroot, tpMprotect               link.Link
+		kpUnshare, kpPivot                   link.Link
+		tpOpenat, tpOpen, tpOpenat2          link.Link
+		tpExecve, tpConn                     link.Link
+		tpPtrace, tpUnlinkat                 link.Link
+		tpBPF, tpPerf, tpMount, tpSetns      link.Link
+		tpChroot, tpMprotect                 link.Link
 	)
 	attach("unshare", func() (e error) { kpUnshare, e = link.Kprobe("__x64_sys_unshare", objs.ProgUnshare, nil); return })
 	attach("pivot_root", func() (e error) { kpPivot, e = link.Kprobe("__x64_sys_pivot_root", objs.ProgPivotRoot, nil); return })
@@ -378,6 +391,10 @@ func main() {
 	})
 	attach("open", func() (e error) {
 		tpOpen, e = link.Tracepoint("syscalls", "sys_enter_open", objs.ProgOpen, nil)
+		return
+	})
+	attach("openat2", func() (e error) {
+		tpOpenat2, e = link.Tracepoint("syscalls", "sys_enter_openat2", objs.ProgOpenat2, nil)
 		return
 	})
 	attach("execve", func() (e error) {
@@ -421,6 +438,7 @@ func main() {
 	defer kpPivot.Close()
 	defer tpOpenat.Close()
 	defer tpOpen.Close()
+	defer tpOpenat2.Close()
 	defer tpExecve.Close()
 	defer tpConn.Close()
 	defer tpPtrace.Close()
@@ -441,7 +459,14 @@ func main() {
 	}
 	defer rd.Close()
 
-	go func() { <-sigChan; rd.Close() }()
+	// shutdown is closed once the ringbuf reader has been closed by a
+	// signal, so background loops can stop sleeping immediately.
+	shutdown := make(chan struct{})
+	go func() {
+		<-sigChan
+		rd.Close()
+		close(shutdown)
+	}()
 
 	rl := newRateLimiter(loaded.Rates.EventsPerSec, loaded.Rates.Burst)
 
@@ -459,8 +484,6 @@ func main() {
 				log.Printf("[reload] invalid: %v (keeping current)", err)
 				continue
 			}
-			newCfg.Filter.CommAllowlist = appendUnique(newCfg.Filter.CommAllowlist, "ebpf_controller")
-			newCfg.Filter.CommAllowlist = appendUnique(newCfg.Filter.CommAllowlist, "ebpf-edr")
 			if err := populateFilterMaps(objs.CommAllow, objs.CgAllow, newCfg); err != nil {
 				atomic.AddUint64(&stats.reloadFails, 1)
 				log.Printf("[reload] filter map update failed: %v", err)
@@ -485,12 +508,31 @@ func main() {
 
 	go func() {
 		defer close(eventChan)
+		// A transient ringbuf read error used to terminate the producer
+		// and take the whole sensor down; only a closed reader ends the
+		// loop now, anything else is retried with capped backoff.
+		const retryBase = 50 * time.Millisecond
+		const retryMax = 5 * time.Second
+		backoff := retryBase
 		for {
 			record, err := rd.Read()
 			if err != nil {
+				if errors.Is(err, os.ErrClosed) {
+					return
+				}
 				atomic.AddUint64(&stats.ringbufReadErrs, 1)
-				return
+				log.Printf("[ringbuf] read error: %v (retrying in %v)", err, backoff)
+				select {
+				case <-shutdown:
+					return
+				case <-time.After(backoff):
+				}
+				if backoff < retryMax {
+					backoff *= 2
+				}
+				continue
 			}
+			backoff = retryBase
 			if len(record.RawSample) != eventSize {
 				atomic.AddUint64(&stats.parseErrors, 1)
 				continue
@@ -617,7 +659,9 @@ func main() {
 				st.Sent, st.Failed, st.Dropped, st.Retries, st.QueueDepth, st.CircuitOpen)
 		case <-done:
 			log.Println("[-] Worker finished, shutting down.")
-			_ = sink.Flush(3 * time.Second)
+			if err := sink.Flush(3 * time.Second); err != nil {
+				log.Printf("[shutdown] sink flush incomplete: %v", err)
+			}
 			return
 		}
 	}
@@ -696,15 +740,6 @@ func clearMap(m *ebpf.Map) error {
 		}
 	}
 	return nil
-}
-
-func appendUnique(xs []string, v string) []string {
-	for _, x := range xs {
-		if x == v {
-			return xs
-		}
-	}
-	return append(xs, v)
 }
 
 func cstr(b []byte) string {

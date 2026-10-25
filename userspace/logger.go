@@ -30,6 +30,9 @@ type RotatingLogger struct {
 	bw          *bufio.Writer
 	currentSize int64
 	degraded    bool // true if we couldn't open the target file; we keep running stdout-only
+	retryAt     time.Time
+	warnedOnce  bool // log the degraded transition once, not per event
+	closed      bool
 
 	flushTicker *time.Ticker
 	stopFlush   chan struct{}
@@ -69,7 +72,7 @@ func (rl *RotatingLogger) flushLoop() {
 		select {
 		case <-rl.flushTicker.C:
 			rl.mu.Lock()
-			if rl.bw != nil {
+			if rl.bw != nil && !rl.closed {
 				if err := rl.bw.Flush(); err != nil {
 					log.Printf("[logger] WARNING: periodic flush failed: %v", err)
 				}
@@ -103,13 +106,19 @@ func (rl *RotatingLogger) Write(p []byte) (int, error) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	if rl.degraded || rl.bw == nil {
+	if rl.bw == nil || rl.degraded {
+		rl.tryRecoverLocked()
+	}
+	if rl.bw == nil || rl.degraded || rl.closed {
 		return len(p), nil // swallow; stdout already has it via io.MultiWriter
 	}
 
 	if rl.maxBytes > 0 && rl.currentSize+int64(len(p)) > rl.maxBytes {
 		if err := rl.rotate(); err != nil {
-			log.Printf("[logger] WARNING: rotation failed: %v (continuing to append)", err)
+			log.Printf("[logger] WARNING: rotation failed: %v (will retry)", err)
+			rl.degraded = true
+			rl.retryAt = time.Now().Add(time.Second)
+			return len(p), nil
 		}
 	}
 
@@ -119,6 +128,36 @@ func (rl *RotatingLogger) Write(p []byte) (int, error) {
 		log.Printf("[logger] WARNING: buffered write failed: %v", err)
 	}
 	return n, nil // never propagate file errors up to the ringbuf consumer loop
+}
+
+// tryRecoverLocked attempts to re-open the log file after a mid-run
+// failure (initial open failure, or a rotation that could not complete).
+// Retries are rate-limited to once per second so a persistently broken
+// target (full disk, lost permissions) cannot hot-loop the consumer.
+// The degraded transition is logged once per outage, and recovery is
+// logged so operators can see file alerting come back.
+// Caller must hold rl.mu.
+func (rl *RotatingLogger) tryRecoverLocked() {
+	if rl.closed {
+		return
+	}
+	now := time.Now()
+	if now.Before(rl.retryAt) {
+		return
+	}
+	rl.retryAt = now.Add(time.Second)
+	if err := rl.openCurrent(); err != nil {
+		if !rl.warnedOnce {
+			log.Printf("[logger] WARNING: log file %s unavailable: %v (file alerting degraded, stdout only; retrying)", rl.path, err)
+			rl.warnedOnce = true
+		}
+		return
+	}
+	rl.degraded = false
+	if rl.warnedOnce {
+		log.Printf("[logger] log file recovered: %s", rl.path)
+	}
+	rl.warnedOnce = false
 }
 
 // rotate flushes and closes the current file, shifts path.N -> path.N+1
@@ -169,6 +208,7 @@ func (rl *RotatingLogger) Close() error {
 
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
+	rl.closed = true
 	if rl.bw != nil {
 		rl.bw.Flush()
 	}

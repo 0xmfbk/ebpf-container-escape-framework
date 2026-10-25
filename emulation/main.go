@@ -71,11 +71,22 @@ func emulateNetworkConnection() {
 
 func emulateProcessInjection() {
 	log.Println("[*] Emulating Process Injection (ptrace)...")
-	if err := syscall.PtraceAttach(1); err != nil {
-		log.Printf("[-] Expected ptrace failure (syscall still fired): %v", err)
+	// Attach to a disposable child instead of host PID 1: a successful
+	// attach SIGSTOPs the target, and stopping init — even briefly — is
+	// not an acceptable side effect on a shared host.
+	cmd := exec.Command("sleep", "1")
+	if err := cmd.Start(); err != nil {
+		log.Printf("[-] cannot start ptrace target: %v", err)
 		return
 	}
-	_ = syscall.PtraceDetach(1)
+	time.Sleep(50 * time.Millisecond)
+	if err := syscall.PtraceAttach(cmd.Process.Pid); err != nil {
+		log.Printf("[-] Expected ptrace failure (syscall still fired): %v", err)
+	} else {
+		_ = syscall.PtraceDetach(cmd.Process.Pid)
+	}
+	_ = cmd.Process.Kill()
+	_, _ = cmd.Process.Wait()
 }
 
 func emulateLogTampering() {
@@ -114,6 +125,13 @@ func emulateSuspiciousMount() {
 	err := unix.Mount("/tmp", "/tmp", "", unix.MS_BIND, "")
 	if err != nil {
 		log.Printf("[-] Expected mount failure (syscall still fired): %v", err)
+		return
+	}
+	// As root the bind succeeds and would persist beyond this process,
+	// stacking on every run. Detach immediately so the host mount
+	// namespace is left as we found it.
+	if err := unix.Unmount("/tmp", unix.MNT_DETACH); err != nil {
+		log.Printf("[-] WARNING: bind mount succeeded but unmount failed: %v (manual cleanup: umount /tmp)", err)
 	}
 }
 
@@ -208,7 +226,34 @@ func emulateCgroupReleaseAgent() {
 	}
 }
 
+// emulateOpenat2Bypass fires openat2 against a path that prefix-matches
+// the /etc/shadow rule but does not exist. The sensor hooks
+// sys_enter_openat2; before that hook existed this single syscall
+// bypassed every file-based rule (canary, shadow, runtime sockets,
+// core_pattern, release_agent). The unique target string lets the test
+// suite attribute the resulting event to the openat2 hook specifically.
+func emulateOpenat2Bypass() {
+	log.Println("[*] Emulating openat2 file-rule bypass probe (/etc/shadow-openat2-probe)...")
+	_, err := unix.Openat2(unix.AT_FDCWD, "/etc/shadow-openat2-probe", &unix.OpenHow{
+		Flags: unix.O_RDONLY,
+	})
+	if err != nil {
+		log.Printf("[-] Expected openat2 failure (syscall still fired): %v", err)
+		return
+	}
+	fmt.Println("[+] openat2 open succeeded")
+}
+
 func main() {
+	// This harness fires real syscalls on the host it runs on. Require an
+	// explicit opt-in so it is never executed against a production system
+	// by accident (e.g. a stray `./adversary` as root).
+	if os.Getenv("EDR_EMULATION_CONFIRMED") != "1" {
+		fmt.Fprintln(os.Stderr, "refusing to run: this adversary harness executes real syscalls and,")
+		fmt.Fprintln(os.Stderr, "as root, performs a temporary bind mount of /tmp and ptrace on a child.")
+		fmt.Fprintln(os.Stderr, "Run it on a disposable host with: EDR_EMULATION_CONFIRMED=1 ./adversary")
+		os.Exit(2)
+	}
 	fmt.Println("=== Starting Adversary Emulation Engine ===")
 	emulateNamespaceEscape()
 	emulateSensitiveFileAccess()
@@ -225,5 +270,6 @@ func main() {
 	emulateExecutableMemory()
 	emulateCorePatternModification()
 	emulateCgroupReleaseAgent()
+	emulateOpenat2Bypass()
 	fmt.Println("=== Emulation Completed Successfully ===")
 }

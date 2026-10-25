@@ -2,7 +2,7 @@
 # ebpf-container-escape-framework - install / uninstall
 # Usage: sudo ./install.sh [--prefix PATH] [--dry-run] [--uninstall]
 #                        [--keep-config | --overwrite-config]
-set -uo pipefail
+set -euo pipefail
 
 PREFIX="/usr/local"
 CONFIG_DIR="/etc/ebpf-edr"
@@ -26,6 +26,34 @@ log() { printf '[install] %s\n' "$*"; }
 err() { printf '[install] ERROR: %s\n' "$*" >&2; }
 die() { err "$*"; exit 1; }
 run() { if (( DRY_RUN )); then printf '[dry-run] %s\n' "$*"; else "$@"; fi; }
+
+# Temp files registered here are removed on any exit path (including
+# errexit aborts), so an interrupted install leaves nothing behind.
+TMP_FILES=()
+cleanup_tmp() {
+    local f
+    for f in "${TMP_FILES[@]:-}"; do
+        [[ -n "$f" ]] && rm -f "$f" || true
+    done
+}
+trap cleanup_tmp EXIT
+
+# install_atomic SRC DEST MODE — stage into DEST.tmp.$$ then rename, so a
+# failed or interrupted copy (ENOSPC, EACCES, Ctrl-C) can never leave a
+# truncated file at DEST that systemd would then execute.
+install_atomic() {
+    local src="$1" dest="$2" mode="$3"
+    local tmp="${dest}.tmp.$$"
+    if (( DRY_RUN )); then
+        printf '[dry-run] install -m %s %s %s (atomic)\n' "$mode" "$src" "$dest"
+        return 0
+    fi
+    TMP_FILES+=("$tmp")
+    install -m "$mode" "$src" "$tmp"
+    mv -f "$tmp" "$dest"
+    # After a successful mv the staged path no longer exists; the EXIT
+    # trap's rm -f on it is a harmless no-op.
+}
 
 usage() {
     cat <<EOF
@@ -102,8 +130,8 @@ do_install() {
     run install -d -m 0755 "$sbin_dir" "$lib_dir" "$CONFIG_DIR"
     run install -d -m 0755 "$LOGROTATE_DIR"
 
-    run install -m 0755 "$USER_BIN"   "${sbin_dir}/${BIN_NAME}"
-    run install -m 0644 "$KERNEL_OBJ" "${lib_dir}/bpf_program.o"
+    install_atomic "$USER_BIN"   "${sbin_dir}/${BIN_NAME}" 0755
+    install_atomic "$KERNEL_OBJ" "${lib_dir}/bpf_program.o" 0644
 
     if [[ -f "${CONFIG_DIR}/config.toml" ]]; then
         if (( KEEP_CONFIG )); then
@@ -111,22 +139,24 @@ do_install() {
             run install -m 0644 "$EXAMPLE_CONFIG" "${CONFIG_DIR}/config.toml.new"
         else
             log "overwriting existing config"
-            run install -m 0644 "$EXAMPLE_CONFIG" "${CONFIG_DIR}/config.toml"
+            install_atomic "$EXAMPLE_CONFIG" "${CONFIG_DIR}/config.toml" 0644
         fi
     else
-        run install -m 0644 "$EXAMPLE_CONFIG" "${CONFIG_DIR}/config.toml"
+        install_atomic "$EXAMPLE_CONFIG" "${CONFIG_DIR}/config.toml" 0644
     fi
 
     # systemd unit: substitute @PREFIX@
     local tmp_unit
     tmp_unit="$(mktemp)"
+    TMP_FILES+=("$tmp_unit")
     sed "s|@PREFIX@|${PREFIX}|g" "$UNIT_SRC" > "$tmp_unit"
-    run install -m 0644 "$tmp_unit" "${SYSTEMD_DIR}/${SERVICE_NAME}"
+    install_atomic "$tmp_unit" "${SYSTEMD_DIR}/${SERVICE_NAME}" 0644
     rm -f "$tmp_unit"
 
     # logrotate
     local tmp_lr
     tmp_lr="$(mktemp)"
+    TMP_FILES+=("$tmp_lr")
     cat > "$tmp_lr" <<'LR'
 /var/log/ebpf_edr.json {
     daily
@@ -139,7 +169,7 @@ do_install() {
     copytruncate
 }
 LR
-    run install -m 0644 "$tmp_lr" "${LOGROTATE_DIR}/ebpf-edr"
+    install_atomic "$tmp_lr" "${LOGROTATE_DIR}/ebpf-edr" 0644
     rm -f "$tmp_lr"
 
     run systemctl daemon-reload

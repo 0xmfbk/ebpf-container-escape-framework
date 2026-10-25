@@ -23,3 +23,12 @@ If an attacker inside a container possesses these capabilities, they can hijack 
 *   Preventing execution (Enforcement).
 *   Scanning filesystem artifacts (like `clamav`).
 *   Replacing seccomp, AppArmor, or SELinux.
+
+## 6. Sensor Self-Exclusion
+The daemon excludes its own syscalls from detection by publishing its tgid
+into a kernel-side `self_tgid` map (checked in `is_filtered()`). This is
+deliberately PID-based rather than comm-based: `prctl(PR_SET_NAME)` lets
+any process claim an arbitrary 15-char comm, so a comm allowlist would be
+an evasion primitive. Residual risk: after the daemon exits, its tgid can
+be recycled by a new process; PID reuse within the sensor's uptime is not
+practically exploitable because the map is updated at every daemon start.

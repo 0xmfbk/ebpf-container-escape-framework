@@ -6,6 +6,10 @@
 
 set -euo pipefail
 
+# The bootstrap harness runs the adversary emulation binary, which
+# requires an explicit opt-in; this script is only run on test hosts.
+export EDR_EMULATION_CONFIRMED=1
+
 if [[ $EUID -ne 0 ]]; then
     echo "Run as root:  sudo -E bash scripts/bootstrap_phase2_0.sh"
     exit 1
