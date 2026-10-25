@@ -236,9 +236,12 @@ Targets: `dropped` = 0, `ver_mismatch` = 0, `lineage_cache` under capacity.
 
 ## Verification evidence
 
-Last full run (kernel 6.12.111+deb13-amd64): **82 PASS, 1 WARN, 0 FAIL**
-across 15+2 stages. The one WARN is the synthetic perf workload's CPU
-reading, idle CPU is verified separately at 0.40%.
+Last full run (kernel 6.12.111+deb13-amd64, includes the openat2 hook and
+PID-based self-exclusion): **81 PASS, 3 WARN, 0 FAIL** across 15+2 stages.
+Two WARNs are the opt-in notice for the destructive Docker stage (re-run
+with `EDR_VERIFY_DESTRUCTIVE=1` on a disposable host to include it); the
+third is the synthetic perf workload's CPU reading — idle CPU is verified
+separately at 0.40%.
 
 ## Kubernetes & Docker (Phase 2.7)
 
