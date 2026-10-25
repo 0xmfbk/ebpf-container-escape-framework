@@ -18,7 +18,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v7
       with:
-        go-version: '1.25'
+        go-version: '1.26'
         cache-dependency-path: userspace/go.sum
 
     - name: Install BPF dependencies
@@ -36,6 +36,11 @@ jobs:
 
     - name: Build Go daemon
       run: make userspace
+
+    - name: Build + vet emulation harness
+      run: |
+        make emulation
+        cd emulation && go vet ./...
 
     - name: Check formatting
       run: |
