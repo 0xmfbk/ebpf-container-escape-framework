@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -244,6 +245,74 @@ func emulateOpenat2Bypass() {
 	fmt.Println("[+] openat2 open succeeded")
 }
 
+// emulateIPv6Connection: connect() with an AF_INET6 sockaddr — before
+// Phase D the sensor silently dropped every IPv6 connection event.
+func emulateIPv6Connection() {
+	log.Println("[*] Emulating IPv6 network connection ([::1]:4444)...")
+	conn, err := net.DialTimeout("tcp", "[::1]:4444", 200*time.Millisecond)
+	if err != nil {
+		log.Printf("[-] Expected connect failure (syscall still fired): %v", err)
+		return
+	}
+	_ = conn.Close()
+}
+
+// emulateFilelessExecution: memfd_create + execveat are the fileless
+// execution pair (T1055.012 / T1620). Both syscalls fire with invalid
+// arguments; detection happens at sys_enter before validation.
+func emulateFilelessExecution() {
+	log.Println("[*] Emulating fileless execution (memfd_create + execveat)...")
+	fd, err := unix.MemfdCreate("emul", 0)
+	if err != nil {
+		log.Printf("[-] memfd_create failed: %v", err)
+	} else {
+		_ = unix.Close(fd)
+	}
+	badPath := []byte("/nonexistent-emul-execveat\x00")
+	dfd := unix.AT_FDCWD // through a variable: uintptr(-100) is not a legal constant conversion
+	_, _, errno := unix.Syscall6(unix.SYS_EXECVEAT,
+		uintptr(dfd), uintptr(unsafe.Pointer(&badPath[0])), 0, 0, 0, 0)
+	if errno != 0 {
+		log.Printf("[-] Expected execveat failure (syscall still fired): %v", errno)
+	}
+}
+
+// emulateKernelModuleLoad fires init_module with NULL arguments (rejected
+// immediately by the kernel; the tracepoint has already fired).
+func emulateKernelModuleLoad() {
+	log.Println("[*] Emulating kernel module load (init_module)...")
+	_, _, errno := unix.Syscall(unix.SYS_INIT_MODULE, 0, 0, 0)
+	if errno != 0 {
+		log.Printf("[-] Expected init_module failure (syscall still fired): %v", errno)
+	}
+}
+
+// emulateLogTamperV2: unlink was already covered; wipe/move via truncate
+// and rename were invisible before Phase D. Paths prefix-match the EDR
+// log rule; the files do not need to exist (sys_enter fires first).
+func emulateLogTamperV2() {
+	log.Println("[*] Emulating log tampering v2 (truncate + rename of EDR log path)...")
+	p := "/var/log/ebpf_edr.json.emul_probe"
+	if err := unix.Truncate(p, 0); err != nil {
+		log.Printf("[-] Expected truncate failure (syscall still fired): %v", err)
+	}
+	if err := unix.Rename(p, "/tmp/ebpf_edr.json.moved"); err != nil {
+		log.Printf("[-] Expected rename failure (syscall still fired): %v", err)
+	}
+}
+
+// emulateNestedReleaseAgent opens a release_agent path one level below
+// the cgroup root — outside the fixed path list the sensor matched on
+// before Phase D's suffix scan. ENOENT on cgroup v2; fires regardless.
+func emulateNestedReleaseAgent() {
+	log.Println("[*] Emulating nested cgroup release_agent access...")
+	if f, err := os.Open("/sys/fs/cgroup/emul-probe/release_agent"); err == nil {
+		_ = f.Close()
+	} else {
+		log.Printf("[-] Expected open failure (syscall still fired): %v", err)
+	}
+}
+
 func main() {
 	// This harness fires real syscalls on the host it runs on. Require an
 	// explicit opt-in so it is never executed against a production system
@@ -270,6 +339,11 @@ func main() {
 	emulateExecutableMemory()
 	emulateCorePatternModification()
 	emulateCgroupReleaseAgent()
+	emulateNestedReleaseAgent()
 	emulateOpenat2Bypass()
+	emulateIPv6Connection()
+	emulateFilelessExecution()
+	emulateKernelModuleLoad()
+	emulateLogTamperV2()
 	fmt.Println("=== Emulation Completed Successfully ===")
 }

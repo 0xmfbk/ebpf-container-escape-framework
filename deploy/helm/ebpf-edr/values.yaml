@@ -4,7 +4,7 @@
 
 image:
   repository: 0xmfbk/ebpf-container-escape-framework
-  tag: v3.0.0
+  tag: v3.1.0
   pullPolicy: IfNotPresent
 
 # Least-privilege defaults: everything dropped, only what the sensor

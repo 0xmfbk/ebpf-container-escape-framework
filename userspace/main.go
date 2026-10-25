@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -21,12 +23,12 @@ import (
 
 const (
 	eventChanSize     = 4096
-	eventSize         = 208
+	eventSize         = 224
 	eventWords        = eventSize / 8
-	eventVersion      = 3
-	daemonVersion     = "3.0.0"
+	eventVersion      = 4
+	daemonVersion     = "3.1.0"
 	defaultHealthTick = 60 * time.Second
-	ActionMaxID       = 17
+	ActionMaxID       = 20
 )
 
 /* Action IDs - must match enum event_action in common.h */
@@ -48,6 +50,9 @@ const (
 	ActionCorePatternModification   = 14
 	ActionCgroupReleaseAgent        = 15
 	ActionCanaryTriggered           = 16
+	ActionMemfdCreate               = 17
+	ActionExecveat                  = 18
+	ActionKernelModuleLoad          = 19
 )
 
 var actionNames = map[uint32]string{
@@ -67,6 +72,9 @@ var actionNames = map[uint32]string{
 	ActionCorePatternModification:   "Core_Pattern_Modification",
 	ActionCgroupReleaseAgent:        "Cgroup_Release_Agent",
 	ActionCanaryTriggered:           "Canary_Triggered",
+	ActionMemfdCreate:               "Memfd_Create",
+	ActionExecveat:                  "Execveat",
+	ActionKernelModuleLoad:          "Kernel_Module_Load",
 }
 
 type event_t struct {
@@ -80,11 +88,12 @@ type event_t struct {
 	Flags       uint32
 	Comm        [16]byte
 	Filename    [128]byte
-	DestIP      [4]byte
+	DestIP      [16]byte
 	DestPort    uint16
 	AuxU16      uint16
 	AuxU64      uint64
 	AuxU32      uint32
+	_           [4]byte // tail padding to the 224-byte wire size
 }
 
 type SecurityAlert struct {
@@ -116,17 +125,38 @@ type SecurityAlert struct {
 	AuxU64            uint64         `json:"aux_u64,omitempty"`
 }
 
-var suspiciousPorts = map[uint16]bool{4444: true, 1337: true, 31337: true, 6666: true, 6697: true}
-
-func formatIPv4(ip [4]byte) string {
+// formatIP renders the 16-byte dest_ip field: bytes 4..15 zero means the
+// kernel stored an IPv4 address, anything else is rendered as IPv6.
+func formatIP(ip [16]byte) string {
+	for _, b := range ip[4:] {
+		if b != 0 {
+			return net.IP(ip[:]).String()
+		}
+	}
 	return fmt.Sprintf("%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3])
 }
 
-func calculateSeverity(action, command, target string, destPort uint16) (string, string, string) {
+// isSuspiciousPort consults the live config ([network].suspicious_ports).
+func isSuspiciousPort(cfg Config, p uint16) bool {
+	for _, v := range cfg.Network.SuspiciousPorts {
+		if v > 0 && uint16(v) == p {
+			return true
+		}
+	}
+	return false
+}
+
+// CLONE_NEWUSER in unshare flags: the classic container escape precursor.
+const cloneNewUserFlag = 0x40000000
+
+func calculateSeverity(cfg Config, action, command, target string, destPort uint16, auxFlags uint32) (string, string, string) {
 	switch action {
 	case "Container_Pivot_Root_Escape":
 		return "CRITICAL", "T1611", "Escape to Host"
 	case "Container_Namespace_Unshare":
+		if auxFlags&cloneNewUserFlag != 0 {
+			return "CRITICAL", "T1611", "Escape to Host: unshare(CLONE_NEWUSER)"
+		}
 		return "HIGH", "T1611", "Escape to Host"
 	case "Sensitive_File_Access":
 		return "HIGH", "T1003.008", "OS Credential Dumping: /etc/shadow"
@@ -135,7 +165,7 @@ func calculateSeverity(action, command, target string, destPort uint16) (string,
 	case "Log_Tampering":
 		return "HIGH", "T1562.001", "Impair Defenses: Indicator Blocking"
 	case "Network_Connection":
-		if suspiciousPorts[destPort] {
+		if isSuspiciousPort(cfg, destPort) {
 			return "HIGH", "T1071", "Application Layer Protocol (Suspicious Port)"
 		}
 		return "INFO", "T1071", "Application Layer Protocol"
@@ -162,6 +192,12 @@ func calculateSeverity(action, command, target string, destPort uint16) (string,
 		return "CRITICAL", "T1611", "Escape to Host: cgroup release_agent"
 	case "Canary_Triggered":
 		return "CRITICAL", "T1552.001", "Unsecured Credentials: Canary File Accessed"
+	case "Memfd_Create":
+		return "MEDIUM", "T1055.012", "Process Injection: Memfd"
+	case "Execveat":
+		return "MEDIUM", "T1620", "Reflective Code Loading: execveat"
+	case "Kernel_Module_Load":
+		return "HIGH", "T1547.006", "Boot or Logon Autostart: Kernel Modules"
 	case "Sensor_Heartbeat":
 		return "INFO", "N/A", "Sensor Health Heartbeat"
 	default:
@@ -382,9 +418,34 @@ func main() {
 		ActionEnabled *ebpf.Map     `ebpf:"action_enabled"`
 		CanaryPaths   *ebpf.Map     `ebpf:"canary_paths"`
 		SelfTgid      *ebpf.Map     `ebpf:"self_tgid"`
+		FileHookLsm   *ebpf.Map     `ebpf:"file_hook_lsm"`
+		// Catch-all: receives every loaded program, including the
+		// optional lsm_file_open on kernels where it is supported.
+		Programs map[string]*ebpf.Program
+	}
+	// BPF LSM availability: the lsm/file_open program is deleted from
+	// the spec before load when the kernel's active LSM list lacks bpf,
+	// and deleted + reloaded once if the verifier still rejects it. The
+	// sensor must run identically (tracepoint-based) either way.
+	lsmSupported := false
+	if data, err := os.ReadFile("/sys/kernel/security/lsm"); err == nil {
+		lsmSupported = strings.Contains(string(data), "bpf")
+	}
+	if !lsmSupported {
+		log.Printf("[-] BPF LSM not active on this kernel; file rules run on open/openat/openat2 tracepoints")
+		delete(spec.Programs, "lsm_file_open")
 	}
 	if err := spec.LoadAndAssign(&objs, nil); err != nil {
-		log.Fatalf("load objects: %v", err)
+		if !lsmSupported {
+			log.Fatalf("load objects: %v", err)
+		}
+		// Kernel lists bpf in its LSMs but rejected the program (e.g.
+		// bpf_d_path restrictions): drop it and keep the tracepoints.
+		delete(spec.Programs, "lsm_file_open")
+		log.Printf("[-] lsm/file_open not loadable (%v); keeping tracepoint file hooks", err)
+		if err := spec.LoadAndAssign(&objs, nil); err != nil {
+			log.Fatalf("load objects: %v", err)
+		}
 	}
 	defer objs.ProgUnshare.Close()
 	defer objs.ProgPivotRoot.Close()
@@ -438,6 +499,10 @@ func main() {
 		tpPtrace, tpUnlinkat            link.Link
 		tpBPF, tpPerf, tpMount, tpSetns link.Link
 		tpChroot, tpMprotect            link.Link
+		tpTruncate, tpRename            link.Link
+		tpRenameat, tpRenameat2         link.Link
+		tpMemfd, tpExecveat             link.Link
+		tpInitMod, tpFinitMod           link.Link
 	)
 	attach("unshare", func() (e error) { kpUnshare, e = link.Kprobe("__x64_sys_unshare", objs.ProgUnshare, nil); return })
 	attach("pivot_root", func() (e error) { kpPivot, e = link.Kprobe("__x64_sys_pivot_root", objs.ProgPivotRoot, nil); return })
@@ -451,6 +516,38 @@ func main() {
 	})
 	attach("openat2", func() (e error) {
 		tpOpenat2, e = link.Tracepoint("syscalls", "sys_enter_openat2", objs.ProgOpenat2, nil)
+		return
+	})
+	attach("truncate", func() (e error) {
+		tpTruncate, e = link.Tracepoint("syscalls", "sys_enter_truncate", objs.Programs["trace_truncate"], nil)
+		return
+	})
+	attach("rename", func() (e error) {
+		tpRename, e = link.Tracepoint("syscalls", "sys_enter_rename", objs.Programs["trace_rename"], nil)
+		return
+	})
+	attach("renameat", func() (e error) {
+		tpRenameat, e = link.Tracepoint("syscalls", "sys_enter_renameat", objs.Programs["trace_renameat"], nil)
+		return
+	})
+	attach("renameat2", func() (e error) {
+		tpRenameat2, e = link.Tracepoint("syscalls", "sys_enter_renameat2", objs.Programs["trace_renameat2"], nil)
+		return
+	})
+	attach("memfd_create", func() (e error) {
+		tpMemfd, e = link.Tracepoint("syscalls", "sys_enter_memfd_create", objs.Programs["trace_memfd_create"], nil)
+		return
+	})
+	attach("execveat", func() (e error) {
+		tpExecveat, e = link.Tracepoint("syscalls", "sys_enter_execveat", objs.Programs["trace_execveat"], nil)
+		return
+	})
+	attach("init_module", func() (e error) {
+		tpInitMod, e = link.Tracepoint("syscalls", "sys_enter_init_module", objs.Programs["trace_init_module"], nil)
+		return
+	})
+	attach("finit_module", func() (e error) {
+		tpFinitMod, e = link.Tracepoint("syscalls", "sys_enter_finit_module", objs.Programs["trace_finit_module"], nil)
 		return
 	})
 	attach("execve", func() (e error) {
@@ -495,6 +592,14 @@ func main() {
 	defer tpOpenat.Close()
 	defer tpOpen.Close()
 	defer tpOpenat2.Close()
+	defer tpTruncate.Close()
+	defer tpRename.Close()
+	defer tpRenameat.Close()
+	defer tpRenameat2.Close()
+	defer tpMemfd.Close()
+	defer tpExecveat.Close()
+	defer tpInitMod.Close()
+	defer tpFinitMod.Close()
 	defer tpExecve.Close()
 	defer tpConn.Close()
 	defer tpPtrace.Close()
@@ -505,6 +610,25 @@ func main() {
 	defer tpSetns.Close()
 	defer tpChroot.Close()
 	defer tpMprotect.Close()
+
+	// Optional BPF LSM hook: resolved-path file detection. On successful
+	// attach, flip file_hook_lsm so the open tracepoints go passive and
+	// each file event is emitted exactly once (from the LSM, after path
+	// resolution — io_uring-driven opens included).
+	if p := objs.Programs["lsm_file_open"]; p != nil {
+		if lk, err := link.AttachLSM(link.LSMOptions{Program: p}); err == nil {
+			defer lk.Close()
+			if err := objs.FileHookLsm.Put(uint32(0), uint32(1)); err == nil {
+				log.Printf("[-] lsm/file_open attached: file rules use resolved kernel paths (io_uring opens covered)")
+			}
+		} else {
+			log.Printf("[-] lsm/file_open attach failed (%v); tracepoint file hooks remain primary", err)
+		}
+	}
+	// Close anything that only landed in the catch-all map.
+	for _, p := range objs.Programs {
+		defer p.Close()
+	}
 
 	log.Printf("[-] EDR Engine active (event version %d, mode=%s). Streaming to stdout + %s",
 		eventVersion, loaded.Mode, loaded.Log.Path)
@@ -662,14 +786,17 @@ func main() {
 
 			comm := cstr(ev.Comm[:])
 			filename := cstr(ev.Filename[:])
-			severity, mitreID, mitreTechnique := calculateSeverity(action, comm, filename, ev.DestPort)
+			// Live config snapshot: severity tuning (suspicious ports,
+			// lineage depth) honors SIGHUP reloads.
+			cur := getConfig()
+			severity, mitreID, mitreTechnique := calculateSeverity(cur, action, comm, filename, ev.DestPort, ev.AuxU32)
 			container := resolver.resolve(ev.CgroupID, ev.Pid)
 			k8sInfo, _ := k8sResolver.Lookup(container.ContainerID)
 
 			var lineageBuf [16]lineageEntry
 			lineage, lineageComplete := lineageC.buildLineage(
 				lineageBuf[:0], ev.Pid, ev.Ppid, ev.StartTimeNs, comm,
-				loaded.Context.LineageMaxDepth)
+				cur.Context.LineageMaxDepth)
 			lineageTruncated := !lineageComplete
 			lineageSummary := buildLineageSummary(lineage)
 
@@ -687,11 +814,16 @@ func main() {
 			switch action {
 			case "Sensitive_File_Access", "Process_Execution", "Log_Tampering",
 				"Suspicious_Mount", "Chroot_Escape",
-				"Core_Pattern_Modification", "Cgroup_Release_Agent":
+				"Core_Pattern_Modification", "Cgroup_Release_Agent",
+				"Memfd_Create", "Execveat":
 				target = filename
 			case "Network_Connection":
-				destIPStr = formatIPv4(ev.DestIP)
-				target = fmt.Sprintf("%s:%d", destIPStr, ev.DestPort)
+				destIPStr = formatIP(ev.DestIP)
+				if strings.Contains(destIPStr, ":") {
+					target = fmt.Sprintf("[%s]:%d", destIPStr, ev.DestPort)
+				} else {
+					target = fmt.Sprintf("%s:%d", destIPStr, ev.DestPort)
+				}
 			}
 
 			alert := SecurityAlert{

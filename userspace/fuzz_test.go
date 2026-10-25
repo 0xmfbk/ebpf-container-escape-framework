@@ -42,7 +42,7 @@ func FuzzDecodeEvent(f *testing.F) {
 		fname := cstr(ev.Filename[:])
 
 		if action, ok := actionNames[ev.ActionID]; ok {
-			_, _, _ = calculateSeverity(action, comm, fname, ev.DestPort)
+			_, _, _ = calculateSeverity(DefaultConfig(), action, comm, fname, ev.DestPort, ev.AuxU32)
 		}
 	})
 }

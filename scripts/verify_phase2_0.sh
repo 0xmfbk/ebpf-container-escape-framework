@@ -109,13 +109,21 @@ stage_env() {
     local tproot=""
     [[ -r /sys/kernel/tracing/events/syscalls ]] && tproot="/sys/kernel/tracing"
     [[ -z "$tproot" && -r /sys/kernel/debug/tracing/events/syscalls ]] && tproot="/sys/kernel/debug/tracing"
-    for tp in openat open execve connect ptrace unlinkat bpf perf_event_open mount setns chroot mprotect; do
+    for tp in openat open openat2 execve execveat connect ptrace unlinkat bpf \
+              perf_event_open mount setns chroot mprotect truncate rename renameat \
+              renameat2 memfd_create init_module finit_module; do
         if [[ -n "$tproot" && -r "$tproot/events/syscalls/sys_enter_${tp}/id" ]]; then
             pass "tracepoint present: sys_enter_${tp}"
         else
             warn "tracepoint not listed: sys_enter_${tp}"
         fi
     done
+
+    if [[ -r /sys/kernel/security/lsm ]] && grep -q 'bpf' /sys/kernel/security/lsm; then
+        pass "BPF LSM active (lsm/file_open eligible)"
+    else
+        warn "BPF LSM not active; file rules fall back to open/openat/openat2 tracepoints"
+    fi
 
     if [[ -r /proc/kallsyms ]]; then
         for kp in __x64_sys_unshare __x64_sys_pivot_root; do
@@ -176,8 +184,8 @@ stage_layout() {
     c_ver="$(grep '^VERSION=' "${OUT}/layout_c.txt" | cut -d= -f2)"
     info "C: sizeof(event_t)=$c_size version=$c_ver"
 
-    [[ "$c_size" == "208" ]] && pass "C sizeof(event_t) == 208" || fail "C sizeof(event_t) == $c_size, expected 208"
-    [[ "$c_ver" == "3"   ]] && pass "C EVENT_VERSION == 3"   || fail "C EVENT_VERSION == $c_ver, expected 3"
+    [[ "$c_size" == "224" ]] && pass "C sizeof(event_t) == 224" || fail "C sizeof(event_t) == $c_size, expected 224"
+    [[ "$c_ver" == "4"   ]] && pass "C EVENT_VERSION == 4"   || fail "C EVENT_VERSION == $c_ver, expected 4"
 
     cd "${ROOT}/userspace" || return
     if go test -run TestEventLayout -v . > "${OUT}/layout_go.txt" 2>&1; then
@@ -211,7 +219,9 @@ stage_load() {
     local pin="${OUT}/bpftool_pin"
     rm -rf "$pin"; mkdir -p "$pin"
 
-    if bpftool prog loadall "$BPF_OBJ" "$pin" type kprobe 2>"${OUT}/bpftool_load.err"; then
+    # No forced program type: sections imply it (kprobe/, tracepoint/,
+    # lsm/) — forcing kprobe would mis-load the Phase D LSM program.
+    if bpftool prog loadall "$BPF_OBJ" "$pin" 2>"${OUT}/bpftool_load.err"; then
         pass "bpftool prog loadall succeeded (all programs pass verifier)"
         ls "$pin" | sed 's/^/    pinned: /'
     else
@@ -709,7 +719,7 @@ NH_CFG_END
 
     sleep 2
 
-    local required=(Ebpf_Tampering Perf_Event_Open Suspicious_Mount Namespace_Switch Chroot_Escape Executable_Memory Core_Pattern_Modification Cgroup_Release_Agent)
+    local required=(Ebpf_Tampering Perf_Event_Open Suspicious_Mount Namespace_Switch Chroot_Escape Executable_Memory Core_Pattern_Modification Cgroup_Release_Agent Memfd_Create Execveat Kernel_Module_Load)
     local seen=0
     for action in "${required[@]}"; do
         if grep -q "\"action\":\"$action\"" "$LOG_FILE"; then
@@ -720,6 +730,24 @@ NH_CFG_END
         fi
     done
     info "new_hooks coverage: $seen/${#required[@]}"
+
+    # Phase D specifics: nested release_agent suffix match, IPv6 connect,
+    # and truncate-based log tampering (not just unlinkat).
+    if grep -q '"target":"/sys/fs/cgroup/emul-probe/release_agent"' "$LOG_FILE"; then
+        pass "phase_d: nested release_agent suffix match"
+    else
+        fail "phase_d: nested release_agent not detected"
+    fi
+    if grep -q '"dest_ip":"::1"' "$LOG_FILE"; then
+        pass "phase_d: IPv6 connect observed"
+    else
+        fail "phase_d: IPv6 connect not observed"
+    fi
+    if grep -q '"target":"/var/log/ebpf_edr.json.emul_probe"' "$LOG_FILE"; then
+        pass "phase_d: truncate log tampering observed"
+    else
+        fail "phase_d: truncate log tampering not observed"
+    fi
 
     kill -TERM $p 2>/dev/null; sleep 1; kill -KILL $p 2>/dev/null
 }

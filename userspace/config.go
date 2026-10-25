@@ -22,6 +22,7 @@ type Config struct {
 	Output          OutputConfig    `toml:"output"`
 	Metrics         MetricsConfig   `toml:"metrics"`
 	Sensor          SensorConfig    `toml:"sensor"`
+	Network         NetworkConfig   `toml:"network"`
 }
 
 type LogConfig struct {
@@ -78,6 +79,12 @@ type ContextConfig struct {
 	CgroupCacheSize  int `toml:"cgroup_cache_size"`
 }
 
+// NetworkConfig tunes network-event severity. Ports listed here raise
+// Network_Connection from INFO to HIGH; consulted live (SIGHUP reload).
+type NetworkConfig struct {
+	SuspiciousPorts []int `toml:"suspicious_ports"`
+}
+
 // MetricsConfig controls the Prometheus text-exposition endpoint. Off by
 // default: an audit-only sensor should not open listening sockets unless
 // an operator asks for it. Localhost bind by default so enabling it never
@@ -108,6 +115,7 @@ func DefaultConfig() Config {
 		Container: ContainerConfig{CacheMaxEntries: 5000},
 		Context:   ContextConfig{LineageMaxDepth: 16, LineageCacheSize: 20000, CgroupCacheSize: 5000},
 		Metrics:   MetricsConfig{Enabled: false, Bind: "127.0.0.1:9400"},
+		Network:   NetworkConfig{SuspiciousPorts: []int{4444, 1337, 31337, 6666, 6697}},
 		Output: OutputConfig{
 			Format: "json",
 			Target: "file",
@@ -246,6 +254,11 @@ func (c *Config) Validate() error {
 	if c.Metrics.Enabled {
 		if _, _, err := net.SplitHostPort(c.Metrics.Bind); err != nil {
 			return fmt.Errorf("metrics.bind %q: %w", c.Metrics.Bind, err)
+		}
+	}
+	for _, p := range c.Network.SuspiciousPorts {
+		if p < 1 || p > 65535 {
+			return fmt.Errorf("network.suspicious_ports entry %d must be 1..65535", p)
 		}
 	}
 	return nil

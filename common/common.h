@@ -2,11 +2,13 @@
 #ifndef __EBPF_EDR_COMMON_H
 #define __EBPF_EDR_COMMON_H
 
-#define EVENT_VERSION 3
+#define EVENT_VERSION 4
 
 #define MAX_COMM_LEN     16
 #define MAX_FILENAME_LEN 128
-#define MAX_DEST_IP_LEN  4
+/* 16 bytes: full IPv6 address; IPv4 events zero-fill bytes 4..15 and
+ * userspace formats them as dotted quad. */
+#define MAX_DEST_IP_LEN  16
 
 enum event_action {
     ACTION_UNKNOWN                     = 0,
@@ -26,7 +28,10 @@ enum event_action {
     ACTION_CORE_PATTERN_MODIFICATION   = 14,
     ACTION_CGROUP_RELEASE_AGENT        = 15,
     ACTION_CANARY_TRIGGERED            = 16,
-    ACTION__MAX                        = 17,
+    ACTION_MEMFD_CREATE                = 17,
+    ACTION_EXECVEAT                    = 18,
+    ACTION_KERNEL_MODULE_LOAD          = 19,
+    ACTION__MAX                        = 20,
 };
 
 /* Event flags (bitfield in event_t.flags). */
@@ -35,10 +40,10 @@ enum event_action {
 #define EVENT_FLAG_RATE_LIMITED (1U << 2)
 
 /*
- * Wire format v3. 208 bytes, natural alignment. New fields at the end:
- *   aux_u16  - small auxiliary (bpf cmd, mprotect prot, setns nstype)
- *   aux_u64  - larger auxiliary (mmap address, mount flags)
- *   aux_u32  - mid size auxiliary (bpf prog_type, perf pid)
+ * Wire format v4. 224 bytes, natural alignment. Changes from v3:
+ *   - dest_ip widened 4 -> 16 bytes (IPv6 support)
+ *   - dest_port/aux_u16/aux_u64/aux_u32 shifted accordingly
+ * Kernel zeroes the record on reserve; readers must check version==4.
  */
 struct event_t {
     __u64 cgroup_id;                  /*   0 */
@@ -52,12 +57,13 @@ struct event_t {
     __u8  comm[MAX_COMM_LEN];         /*  40 */
     __u8  filename[MAX_FILENAME_LEN]; /*  56 */
     __u8  dest_ip[MAX_DEST_IP_LEN];   /* 184 */
-    __u16 dest_port;                  /* 188 */
-    __u16 aux_u16;                    /* 190 */
-    __u64 aux_u64;                    /* 192 */
-    __u32 aux_u32;                    /* 200 */
+    __u16 dest_port;                  /* 200 */
+    __u16 aux_u16;                    /* 202 */
+    __u64 aux_u64;                    /* 208 */
+    __u32 aux_u32;                    /* 216 */
+    /* 4 bytes tail padding to 8-byte alignment */
 } __attribute__((aligned(8)));
 
-_Static_assert(sizeof(struct event_t) == 208, "event_t layout drift v3");
+_Static_assert(sizeof(struct event_t) == 224, "event_t layout drift v4");
 
 #endif /* __EBPF_EDR_COMMON_H */

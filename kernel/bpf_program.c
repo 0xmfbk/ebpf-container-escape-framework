@@ -62,6 +62,17 @@ struct {
     __type(value, __u32);
 } self_tgid SEC(".maps");
 
+/* Set to 1 by userspace after lsm/file_open attaches successfully. While
+ * set, the open/openat/openat2 tracepoints stay passive: the LSM hook
+ * sees the RESOLVED path for every open (including io_uring-driven ones)
+ * and would otherwise duplicate each file event. */
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u32);
+} file_hook_lsm SEC(".maps");
+
 /* ================== Helpers ================== */
 
 static __always_inline int is_filtered(void)
@@ -130,6 +141,21 @@ static __always_inline int is_shadow_path(const char *p)
     return MATCH_STR(p, "/etc/shadow");
 }
 
+static __always_inline int is_edr_log_path(const char *p)
+{
+    return MATCH_STR(p, "/var/log/ebpf_edr");
+}
+
+/* open(2) style flags for write-intent detection. */
+#define O_WRONLY_VAL 0x1
+#define O_RDWR_VAL   0x2
+#define O_TRUNC_VAL  0x200
+
+static __always_inline int has_write_intent(__u64 flags)
+{
+    return flags & (O_WRONLY_VAL | O_RDWR_VAL | O_TRUNC_VAL);
+}
+
 /* Container runtime control sockets. Prefix match via MATCH_STR; the
  * prefix form catches bind mounts at these canonical paths. */
 static __always_inline int is_container_runtime_socket_path(const char *p)
@@ -152,21 +178,42 @@ static __always_inline int is_kernel_helper_path(const char *p)
         || MATCH_STR(p, "/proc/sys/kernel/uevent_helper");
 }
 
-/* cgroup release_agent / notify_on_release. Paths are variable (one per
- * subsystem on cgroup v1); we cover the root and the most common cgroup
- * v1 hierarchies. On cgroup v2 (kernel 6.12 / Debian 13 default) these
- * files do not exist, so additional patterns would be dead weight. See
- * docs/DETECTION_COVERAGE.md for the coverage note. */
+/* cgroup release_agent / notify_on_release. Suffix scan: matches these
+ * files ANYWHERE under /sys/fs/cgroup/ (any cgroup v1 hierarchy or
+ * delegated subtree), not just a fixed list of exact paths. On cgroup v2
+ * the files do not exist, so the scan is dead weight there — acceptable
+ * for the few-hundred-instruction bounded loop. Explicit char compares
+ * (not string literals) keep the whole thing verifier-friendly. */
+static __always_inline int is_release_agent_at(const char *p, int i)
+{
+    return p[i] == 'r' && p[i+1] == 'e' && p[i+2] == 'l' && p[i+3] == 'e'
+        && p[i+4] == 'a' && p[i+5] == 's' && p[i+6] == 'e' && p[i+7] == '_'
+        && p[i+8] == 'a' && p[i+9] == 'g' && p[i+10] == 'e' && p[i+11] == 'n'
+        && p[i+12] == 't';
+}
+
+static __always_inline int is_notify_on_release_at(const char *p, int i)
+{
+    return p[i] == 'n' && p[i+1] == 'o' && p[i+2] == 't' && p[i+3] == 'i'
+        && p[i+4] == 'f' && p[i+5] == 'y' && p[i+6] == '_' && p[i+7] == 'o'
+        && p[i+8] == 'n' && p[i+9] == '_' && p[i+10] == 'r' && p[i+11] == 'e'
+        && p[i+12] == 'l' && p[i+13] == 'e' && p[i+14] == 'a' && p[i+15] == 's'
+        && p[i+16] == 'e';
+}
+
 static __always_inline int is_cgroup_release_agent_path(const char *p)
 {
-    return MATCH_STR(p, "/sys/fs/cgroup/release_agent")
-        || MATCH_STR(p, "/sys/fs/cgroup/notify_on_release")
-        || MATCH_STR(p, "/sys/fs/cgroup/memory/release_agent")
-        || MATCH_STR(p, "/sys/fs/cgroup/memory/notify_on_release")
-        || MATCH_STR(p, "/sys/fs/cgroup/cpu,cpuacct/release_agent")
-        || MATCH_STR(p, "/sys/fs/cgroup/cpu,cpuacct/notify_on_release")
-        || MATCH_STR(p, "/sys/fs/cgroup/pids/release_agent")
-        || MATCH_STR(p, "/sys/fs/cgroup/pids/notify_on_release");
+    if (!MATCH_STR(p, "/sys/fs/cgroup/"))
+        return 0;
+    for (int i = 0; i + 16 < MAX_FILENAME_LEN; i++) {
+        if (p[i] == '\0')
+            return 0;
+        if (p[i] == 'r' && is_release_agent_at(p, i))
+            return 1;
+        if (p[i] == 'n' && is_notify_on_release_at(p, i))
+            return 1;
+    }
+    return 0;
 }
 
 /* ================== Container escape ================== */
@@ -237,34 +284,29 @@ struct trace_event_raw_sys_enter_openat2 {
     __s64 size;
 };
 
-/* Shared classifier for open/openat/openat2: canary map first, then the
- * static path families. Prefix matches are intentional (see the helpers). */
-static __always_inline int handle_open_path(const char *filename)
+/* Shared classifier for file paths: canary map first, then static
+ * families. flags are open(2)-style and drive write-intent detection
+ * for EDR-log tampering (O_WRONLY/O_RDWR/O_TRUNC). Prefix matches are
+ * intentional (see the helpers). */
+static __always_inline __u32 classify_path(const char *path, __u64 flags)
 {
-    char path[MAX_FILENAME_LEN] = {};
-    if (bpf_probe_read_user_str(path, sizeof(path), filename) < 0)
-        return 0;
+    if (bpf_map_lookup_elem(&canary_paths, path))
+        return ACTION_CANARY_TRIGGERED;
+    if (is_edr_log_path(path) && has_write_intent(flags))
+        return ACTION_LOG_TAMPERING;
+    if (is_shadow_path(path) || is_container_runtime_socket_path(path))
+        return ACTION_SENSITIVE_FILE_ACCESS;
+    if (is_kernel_helper_path(path))
+        return ACTION_CORE_PATTERN_MODIFICATION;
+    if (is_cgroup_release_agent_path(path))
+        return ACTION_CGROUP_RELEASE_AGENT;
+    return 0;
+}
 
-    __u32 action = 0;
-
-    // 1. Check Canary Map first (Highest priority)
-    if (bpf_map_lookup_elem(&canary_paths, path)) {
-        action = ACTION_CANARY_TRIGGERED;
-    }
-    // 2. Fallback to static checks
-    else if (is_shadow_path(path) || is_container_runtime_socket_path(path)) {
-        action = ACTION_SENSITIVE_FILE_ACCESS;
-    }
-    else if (is_kernel_helper_path(path)) {
-        action = ACTION_CORE_PATTERN_MODIFICATION;
-    }
-    else if (is_cgroup_release_agent_path(path)) {
-        action = ACTION_CGROUP_RELEASE_AGENT;
-    }
-
+static __always_inline int emit_path_event(__u32 action, const char *path)
+{
     if (!action)
         return 0;
-
     struct event_t *e = event_alloc(action);
     if (!e) return 0;
     event_fill_common(e);
@@ -274,22 +316,42 @@ static __always_inline int handle_open_path(const char *filename)
     return 0;
 }
 
+/* Tracepoint entry for user-supplied paths (open family). Passes through
+ * when the LSM hook owns file detection. */
+static __always_inline int handle_open_path(const char *filename, __u64 flags)
+{
+    __u32 zero = 0;
+    __u32 *lsm = bpf_map_lookup_elem(&file_hook_lsm, &zero);
+    if (lsm && *lsm)
+        return 0;
+    char path[MAX_FILENAME_LEN] = {};
+    if (bpf_probe_read_user_str(path, sizeof(path), filename) < 0)
+        return 0;
+    return emit_path_event(classify_path(path, flags), path);
+}
+
 SEC("tracepoint/syscalls/sys_enter_openat")
 int trace_openat(struct trace_event_raw_sys_enter_openat *ctx)
 {
-    return handle_open_path(ctx->filename);
+    return handle_open_path(ctx->filename, (__u64)ctx->flags);
 }
 
 SEC("tracepoint/syscalls/sys_enter_open")
 int trace_open(struct trace_event_raw_sys_enter_open *ctx)
 {
-    return handle_open_path(ctx->filename);
+    return handle_open_path(ctx->filename, (__u64)ctx->flags);
 }
 
 SEC("tracepoint/syscalls/sys_enter_openat2")
 int trace_openat2(struct trace_event_raw_sys_enter_openat2 *ctx)
 {
-    return handle_open_path(ctx->filename);
+    struct open_how_u {
+        __u64 flags;
+        __u64 mode;
+        __u64 resolve;
+    } how = {};
+    bpf_probe_read_user(&how, sizeof(how), ctx->how);
+    return handle_open_path(ctx->filename, how.flags);
 }
 
 /* ================== Process execution ================== */
@@ -336,24 +398,53 @@ struct sockaddr_in_min {
     __u32 sin_addr;
 };
 
-#define AF_INET_VAL 2
+struct sockaddr_in6_min {
+    __u16 sin6_family;
+    __u16 sin6_port;
+    __u32 sin6_flowinfo;
+    __u8  sin6_addr[16];
+};
+
+#define AF_INET_VAL  2
+#define AF_INET6_VAL 10
 
 SEC("tracepoint/syscalls/sys_enter_connect")
 int trace_connect(struct trace_event_raw_sys_enter_connect *ctx)
 {
-    struct sockaddr_in_min addr = {};
-    if (bpf_probe_read_user(&addr, sizeof(addr), ctx->uservaddr) != 0)
-        return 0;
-    if (addr.sin_family != AF_INET_VAL)
+    /* Read the family first, then the full sockaddr of the right size:
+     * reading in6-sized from a v4 sockaddr could fault past its page. */
+    __u16 family = 0;
+    if (bpf_probe_read_user(&family, sizeof(family), ctx->uservaddr) != 0)
         return 0;
 
-    struct event_t *e = event_alloc(ACTION_NETWORK_CONNECTION);
-    if (!e) return 0;
-    event_fill_common(e);
-    e->action_id = ACTION_NETWORK_CONNECTION;
-    __builtin_memcpy(e->dest_ip, &addr.sin_addr, 4);
-    e->dest_port = ((addr.sin_port & 0xff) << 8) | (addr.sin_port >> 8);
-    bpf_ringbuf_submit(e, 0);
+    if (family == AF_INET_VAL) {
+        struct sockaddr_in_min a4 = {};
+        if (bpf_probe_read_user(&a4, sizeof(a4), ctx->uservaddr) != 0)
+            return 0;
+        struct event_t *e = event_alloc(ACTION_NETWORK_CONNECTION);
+        if (!e) return 0;
+        event_fill_common(e);
+        e->action_id = ACTION_NETWORK_CONNECTION;
+        __builtin_memcpy(e->dest_ip, &a4.sin_addr, 4);
+        e->dest_port = ((a4.sin_port & 0xff) << 8) | (a4.sin_port >> 8);
+        bpf_ringbuf_submit(e, 0);
+        return 0;
+    }
+
+    if (family == AF_INET6_VAL) {
+        struct sockaddr_in6_min a6 = {};
+        if (bpf_probe_read_user(&a6, sizeof(a6), ctx->uservaddr) != 0)
+            return 0;
+        struct event_t *e = event_alloc(ACTION_NETWORK_CONNECTION);
+        if (!e) return 0;
+        event_fill_common(e);
+        e->action_id = ACTION_NETWORK_CONNECTION;
+        __builtin_memcpy(e->dest_ip, &a6.sin6_addr, 16);
+        e->dest_port = ((a6.sin6_port & 0xff) << 8) | (a6.sin6_port >> 8);
+        bpf_ringbuf_submit(e, 0);
+        return 0;
+    }
+
     return 0;
 }
 
@@ -588,6 +679,217 @@ int trace_mprotect(struct trace_event_raw_sys_enter_mprotect *ctx)
     e->aux_u64 = (__u64)ctx->start;
     e->aux_u32 = (__u32)ctx->prot;
     bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+/* ================== NEW: log tampering v2 (Phase D) ================== */
+/* unlinkat only caught deletion; wiping or moving the audit log via
+ * truncate / rename / renameat / renameat2 evaded detection. Write-intent
+ * opens of the log are caught by classify_path above. */
+
+struct trace_event_raw_sys_enter_truncate {
+    __u16 common_type;
+    __u8  common_flags;
+    __u8  common_preempt_count;
+    __u8  common_pid;
+    long int id;
+    const char *path;
+    __s64 length;
+};
+
+static __always_inline int handle_log_path_only(const char *pathname, __u64 aux)
+{
+    char path[MAX_FILENAME_LEN] = {};
+    if (bpf_probe_read_user_str(path, sizeof(path), pathname) < 0)
+        return 0;
+    if (!is_edr_log_path(path))
+        return 0;
+    struct event_t *e = event_alloc(ACTION_LOG_TAMPERING);
+    if (!e) return 0;
+    event_fill_common(e);
+    e->action_id = ACTION_LOG_TAMPERING;
+    __builtin_memcpy(e->filename, path, sizeof(e->filename));
+    e->aux_u64 = aux;
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_enter_truncate")
+int trace_truncate(struct trace_event_raw_sys_enter_truncate *ctx)
+{
+    return handle_log_path_only(ctx->path, (__u64)ctx->length);
+}
+
+struct trace_event_raw_sys_enter_rename {
+    __u16 common_type;
+    __u8  common_flags;
+    __u8  common_preempt_count;
+    __u8  common_pid;
+    long int id;
+    const char *oldname;
+    const char *newname;
+};
+
+SEC("tracepoint/syscalls/sys_enter_rename")
+int trace_rename(struct trace_event_raw_sys_enter_rename *ctx)
+{
+    return handle_log_path_only(ctx->oldname, 0);
+}
+
+struct trace_event_raw_sys_enter_renameat {
+    __u16 common_type;
+    __u8  common_flags;
+    __u8  common_preempt_count;
+    __u8  common_pid;
+    long int id;
+    __s64 olddfd;
+    const char *oldname;
+    __s64 newdfd;
+    const char *newname;
+};
+
+SEC("tracepoint/syscalls/sys_enter_renameat")
+int trace_renameat(struct trace_event_raw_sys_enter_renameat *ctx)
+{
+    return handle_log_path_only(ctx->oldname, 0);
+}
+
+struct trace_event_raw_sys_enter_renameat2 {
+    __u16 common_type;
+    __u8  common_flags;
+    __u8  common_preempt_count;
+    __u8  common_pid;
+    long int id;
+    __s64 olddfd;
+    const char *oldname;
+    __s64 newdfd;
+    const char *newname;
+    __u32 flags;
+};
+
+SEC("tracepoint/syscalls/sys_enter_renameat2")
+int trace_renameat2(struct trace_event_raw_sys_enter_renameat2 *ctx)
+{
+    return handle_log_path_only(ctx->oldname, (__u64)ctx->flags);
+}
+
+/* ================== NEW: fileless execution & modules (Phase D) ======= */
+
+struct trace_event_raw_sys_enter_memfd_create {
+    __u16 common_type;
+    __u8  common_flags;
+    __u8  common_preempt_count;
+    __u8  common_pid;
+    long int id;
+    const char *name;
+    __u32 flags;
+};
+
+SEC("tracepoint/syscalls/sys_enter_memfd_create")
+int trace_memfd_create(struct trace_event_raw_sys_enter_memfd_create *ctx)
+{
+    struct event_t *e = event_alloc(ACTION_MEMFD_CREATE);
+    if (!e) return 0;
+    event_fill_common(e);
+    e->action_id = ACTION_MEMFD_CREATE;
+    bpf_probe_read_user_str(e->filename, sizeof(e->filename), ctx->name);
+    e->aux_u32 = ctx->flags;
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+struct trace_event_raw_sys_enter_execveat {
+    __u16 common_type;
+    __u8  common_flags;
+    __u8  common_preempt_count;
+    __u8  common_pid;
+    long int id;
+    __s64 dfd;
+    const char *filename;
+    const char *const *argv;
+    const char *const *envp;
+    __s64 flags;
+};
+
+SEC("tracepoint/syscalls/sys_enter_execveat")
+int trace_execveat(struct trace_event_raw_sys_enter_execveat *ctx)
+{
+    struct event_t *e = event_alloc(ACTION_EXECVEAT);
+    if (!e) return 0;
+    event_fill_common(e);
+    e->action_id = ACTION_EXECVEAT;
+    bpf_probe_read_user_str(e->filename, sizeof(e->filename), ctx->filename);
+    e->aux_u32 = (__u32)ctx->flags;
+    e->aux_u16 = (__u16)ctx->dfd;
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+struct trace_event_raw_sys_enter_init_module {
+    __u16 common_type;
+    __u8  common_flags;
+    __u8  common_preempt_count;
+    __u8  common_pid;
+    long int id;
+    void *umod;
+    __s64 len;
+    const char *uargs;
+};
+
+SEC("tracepoint/syscalls/sys_enter_init_module")
+int trace_init_module(struct trace_event_raw_sys_enter_init_module *ctx)
+{
+    struct event_t *e = event_alloc(ACTION_KERNEL_MODULE_LOAD);
+    if (!e) return 0;
+    event_fill_common(e);
+    e->action_id = ACTION_KERNEL_MODULE_LOAD;
+    e->aux_u64 = (__u64)ctx->len;
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+struct trace_event_raw_sys_enter_finit_module {
+    __u16 common_type;
+    __u8  common_flags;
+    __u8  common_preempt_count;
+    __u8  common_pid;
+    long int id;
+    __s64 fd;
+    const char *uargs;
+    __s64 flags;
+};
+
+SEC("tracepoint/syscalls/sys_enter_finit_module")
+int trace_finit_module(struct trace_event_raw_sys_enter_finit_module *ctx)
+{
+    struct event_t *e = event_alloc(ACTION_KERNEL_MODULE_LOAD);
+    if (!e) return 0;
+    event_fill_common(e);
+    e->action_id = ACTION_KERNEL_MODULE_LOAD;
+    e->aux_u64 = (__u64)ctx->fd;
+    e->aux_u32 = (__u32)ctx->flags;
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+/* ================== NEW: BPF LSM file_open (Phase D) ================== */
+/* Fires on every file open AFTER path resolution via bpf_d_path — the
+ * resolved kernel path closes the io_uring open bypass and the
+ * user-space filename race in one architectural step. Requires kernel
+ * with CONFIG_BPF_LSM and bpf in the active LSM list; userspace deletes
+ * this section before load when unavailable (see main.go).
+ * AUDIT-ONLY: always returns 0 — this sensor never denies an open. */
+SEC("lsm/file_open")
+int BPF_PROG(lsm_file_open, struct file *file)
+{
+    char path[MAX_FILENAME_LEN] = {};
+    long n = bpf_d_path(&file->f_path, path, sizeof(path));
+    if (n < 0)
+        return 0;
+    __u32 fflags = 0;
+    if (bpf_core_read(&fflags, sizeof(fflags), &file->f_flags) != 0)
+        return 0;
+    emit_path_event(classify_path(path, (__u64)fflags), path);
     return 0;
 }
 

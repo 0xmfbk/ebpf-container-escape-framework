@@ -29,7 +29,7 @@ spec:
         runAsGroup: 0
       containers:
         - name: edr
-          image: 0xmfbk/ebpf-container-escape-framework:v3.0.0
+          image: 0xmfbk/ebpf-container-escape-framework:v3.1.0
           imagePullPolicy: IfNotPresent
           securityContext:
             # Least privilege: load/attach needs BPF+PERFMON (kernel >= 5.8)

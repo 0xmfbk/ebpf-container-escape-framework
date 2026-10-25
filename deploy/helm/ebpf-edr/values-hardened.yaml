@@ -5,7 +5,7 @@
 #     --create-namespace -f deploy/helm/ebpf-edr/values-hardened.yaml
 image:
   repository: 0xmfbk/ebpf-container-escape-framework
-  tag: v3.0.0
+  tag: v3.1.0
   pullPolicy: IfNotPresent
 
 # Defaults already drop ALL and add only BPF/PERFMON/SYS_ADMIN; shown

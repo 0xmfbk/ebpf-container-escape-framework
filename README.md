@@ -29,10 +29,10 @@ An ultra lightweight, audit only Linux EDR agent built with eBPF (C) and a high 
 *   **🐧 5.15 LTS Compatible:** Structural support for Ubuntu 22.04 and Debian 12, tested and verified on Kernel 6.12.
 *   **⚡ High Performance:** `0.40%` idle CPU and `0` ringbuf drops under a 25,000 fork stress test.
 
-**Status:** v3.0.0 — evasion-proofing & failure-mode hardening. 13 MITRE
-ATT&CK techniques across 16 actions; open, openat and openat2 are all
-covered. Verified end to end on kernel 6.12.111+deb13 (81 PASS / 0 FAIL
-core + 7 PASS SIEM).
+**Status:** v3.1.0 — detection strength: IPv6, BPF LSM resolved-path file rules, fileless & module-load coverage.
+16 MITRE ATT&CK techniques across 19 actions; open, openat, openat2 and
+resolved-path (LSM) file opens are all covered. Verified end to end on
+kernel 6.12.111+deb13.
 
 ## Coverage
 
@@ -53,16 +53,25 @@ core + 7 PASS SIEM).
 | 13 | Executable_Memory | MEDIUM | T1620 | tracepoint/sys_enter_mprotect |
 | 14 | Core_Pattern_Modification | CRITICAL | T1611 | tracepoint/sys_enter_openat + open + openat2 |
 | 15 | Cgroup_Release_Agent | CRITICAL | T1611 | tracepoint/sys_enter_openat + open + openat2 |
-| 16 | Canary_Triggered | CRITICAL | T1552.001 | tracepoint/sys_enter_openat + open + openat2 |
+| 16 | Canary_Triggered | CRITICAL | T1552.001 | tracepoint/sys_enter_openat + open + openat2 / lsm file_open |
+| 17 | Memfd_Create | MEDIUM | T1055.012 | tracepoint/sys_enter_memfd_create |
+| 18 | Execveat | MEDIUM | T1620 | tracepoint/sys_enter_execveat |
+| 19 | Kernel_Module_Load | HIGH | T1547.006 | tracepoint/sys_enter_init_module + finit_module |
 
 Actions 9 and 13 are attached but kernel side suppressed by default via
-`disabled_actions` in `config.toml`.
+`disabled_actions` in `config.toml`. Log tampering additionally covers
+`truncate`, `rename`/`renameat`/`renameat2`, and write-intent opens
+(`O_TRUNC`/`O_WRONLY`) of the EDR log. When the kernel's active LSM list
+includes `bpf`, `lsm/file_open` takes over file-path detection with
+resolved kernel paths (io_uring opens included) and the open tracepoints
+go passive to avoid duplicate events.
 
 ## Architecture
 
-Kernel hooks (15) feed a PID-based self-exclusion plus comm/cgroup filter,
-a canary_paths O(1) hash lookup, then an action_enabled lookup. Events are
-pushed to a 1 MiB ringbuf carrying zero-initialized 208 byte records.
+23 syscall hooks (plus an optional `lsm/file_open` on BPF-LSM kernels)
+feed a PID-based self-exclusion plus comm/cgroup filter, a canary_paths
+O(1) hash lookup, then an action_enabled lookup. Events are pushed to a
+1 MiB ringbuf carrying zero-initialized 224 byte records (wire v4).
 Userspace reads into a fixed pooled buffer, applies a per action token bucket, enriches
 with process lineage and cgroup path, and K8s Pod metadata from bounded LRU caches, and routes
 through an Encoder + Sink to any destination.
@@ -172,10 +181,16 @@ TOML at `/etc/ebpf-edr/config.toml`. Precedence: CLI > env (`EDR_*`) > file > de
     [sensor]
     heartbeat_event = false    # INFO Sensor_Heartbeat alert each health tick
 
+    [network]
+    suspicious_ports = [4444, 1337, 31337, 6666, 6697]   # Network_Connection severity HIGH
+
 Reload: `sudo systemctl reload ebpf-edr`. `mode = "enforce"` is rejected;
 this build is audit only.
 
-## Event schema (v3, 208 bytes on the wire)
+## Event schema (v4, 224 bytes on the wire)
+
+IPv4 events zero-fill bytes 4..15 of `dest_ip` and render as dotted quad;
+IPv6 addresses are stored in full.
 
     {
       "timestamp": "2026-10-15T23:52:41Z",

@@ -55,3 +55,7 @@ bind = "127.0.0.1:9400"
 # the normal sink, so a SIEM can alert on sensor silence.
 [sensor]
 heartbeat_event = false
+
+# Ports that raise Network_Connection from INFO to HIGH (live-reloadable).
+[network]
+suspicious_ports = [4444, 1337, 31337, 6666, 6697]
