@@ -5,26 +5,46 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     app: {{ include "ebpf-edr.name" . }}
+    {{- include "ebpf-edr.labels" . | nindent 4 }}
 spec:
   selector:
     matchLabels:
       app: {{ include "ebpf-edr.name" . }}
+  updateStrategy:
+    {{- toYaml .Values.updateStrategy | nindent 4 }}
   template:
     metadata:
       labels:
         app: {{ include "ebpf-edr.name" . }}
+        {{- include "ebpf-edr.labels" . | nindent 8 }}
+      annotations:
+        # Roll pods whenever the rendered config changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
-      hostPID: true
+      hostPID: true   # required to resolve container IDs and process lineage
+      priorityClassName: {{ .Values.priorityClassName }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: edr
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
-            privileged: true
-            readOnlyRootFilesystem: true
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          {{- if and (eq .Values.config.output.target "webhook") (or .Values.secret.create .Values.secret.existingSecret) }}
+          env:
+            - name: SPLUNK_HEC_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.existingSecret | default (printf "%s-token" (include "ebpf-edr.fullname" .)) }}
+                  key: splunk-token
+          {{- end }}
           volumeMounts:
             - name: config
               mountPath: /etc/ebpf-edr
+              readOnly: true
             - name: btf
               mountPath: /sys/kernel/btf/vmlinux
               readOnly: true
@@ -36,6 +56,12 @@ spec:
             - name: tracefs
               mountPath: /sys/kernel/tracing
               readOnly: true
+            - name: run
+              mountPath: /var/run/ebpf-edr
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
@@ -58,5 +84,7 @@ spec:
           hostPath:
             path: /sys/kernel/tracing
             type: Directory
+        - name: run
+          emptyDir: {}
       tolerations:
-        - operator: Exists
+        - operator: Exists   # run on control-plane nodes too

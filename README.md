@@ -269,18 +269,29 @@ This creates the `ebpf-edr` namespace, a ConfigMap for configuration, and a Daem
 
     helm install ebpf-edr ./deploy/helm/ebpf-edr -n ebpf-edr --create-namespace
 
-To send alerts to a SIEM webhook via Helm:
+To send alerts to a SIEM webhook via Helm (token kept in a Secret, never
+in the ConfigMap — the daemon expands `${SPLUNK_HEC_TOKEN}` at load time):
 
     helm install ebpf-edr ./deploy/helm/ebpf-edr -n ebpf-edr --create-namespace \
       --set config.output.target=webhook \
       --set config.output.webhook_url="https://splunk.internal:8088/services/collector/event" \
-      --set config.output.webhook_token="Splunk ${SPLUNK_HEC_TOKEN}"
+      --set secret.create=true \
+      --set secret.splunkToken="your-hec-token"
 
 ### Security Architecture
 
+- **Least privilege (v3.0.0):** `privileged: false` — all capabilities
+  dropped, only `BPF`, `PERFMON`, `SYS_ADMIN` added; seccomp
+  `RuntimeDefault`; `allowPrivilegeEscalation: false`.
 - **`hostPID: true`**: Required to map PIDs to cgroups for lineage.
-- **`privileged: true`**: Required for `CAP_BPF`, `CAP_PERFMON`, `CAP_SYS_ADMIN`.
-- **Host Mounts**: Mounts `/sys/kernel/btf/vmlinux` and `/sys/fs/bpf` from the host.
+- **Liveness/readiness probes**: exec probes on the daemon's heartbeat
+  file (refreshed every 10s after attach) — a hung sensor is restarted.
+- **`priorityClassName: system-node-critical`**: the sensor is not evicted
+  before the workloads it watches.
+- **Config rollout**: a `checksum/config` annotation restarts pods when
+  the ConfigMap changes.
+- **Host Mounts**: `/sys/kernel/btf/vmlinux` and `/sys/kernel/tracing`
+  read-only; `/sys/fs/bpf` writable for map pins.
 - **Resource Limits**: Default limits (256Mi memory, 500m CPU) ensure the DaemonSet cannot starve the node.
 - **Root Filesystem**: Mounted as `readOnlyRootFilesystem: true` to prevent container escape via filesystem writes.
 

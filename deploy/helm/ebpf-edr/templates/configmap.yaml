@@ -3,6 +3,9 @@ kind: ConfigMap
 metadata:
   name: {{ include "ebpf-edr.fullname" . }}
   namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "ebpf-edr.name" . }}
+    {{- include "ebpf-edr.labels" . | nindent 4 }}
 data:
   config.toml: |
     mode = {{ .Values.config.mode | quote }}
@@ -15,6 +18,12 @@ data:
     {{- if eq .Values.config.output.target "webhook" }}
     [output.webhook]
     url = {{ .Values.config.output.webhook_url | quote }}
+    {{- if or .Values.secret.create .Values.secret.existingSecret }}
+    # Token comes from the Secret via env; the daemon expands the
+    # reference at load time, so no credential is stored in this map.
+    auth_header = "Splunk ${SPLUNK_HEC_TOKEN}"
+    {{- else if .Values.config.output.webhook_token }}
     auth_header = {{ .Values.config.output.webhook_token | quote }}
+    {{- end }}
     batch_size = 100
     {{- end }}

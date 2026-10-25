@@ -1,7 +1,37 @@
+# Default values for ebpf-edr.
+# Security contexts default to least-privilege (capabilities, not
+# privileged: true). Override via values-hardened.yaml or your own file.
+
 image:
   repository: 0xmfbk/ebpf-container-escape-framework
-  tag: v2.7.0
+  tag: v3.0.0
   pullPolicy: IfNotPresent
+
+# Least-privilege defaults: everything dropped, only what the sensor
+# needs added. CAP_BPF + CAP_PERFMON load/attach BPF on kernel >= 5.8;
+# CAP_SYS_ADMIN covers kprobe attach and bpffs on older kernels.
+podSecurityContext:
+  runAsUser: 0   # required to read host /proc for lineage
+  runAsGroup: 0
+
+containerSecurityContext:
+  privileged: false
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+    add: ["BPF", "PERFMON", "SYS_ADMIN"]
+  seccompProfile:
+    type: RuntimeDefault
+
+# A node security agent should not be evicted before the workloads it
+# watches.
+priorityClassName: system-node-critical
+
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 1
 
 resources:
   limits:
@@ -11,17 +41,45 @@ resources:
     memory: "64Mi"
     cpu: "50m"
 
+# Liveness is based on the daemon's heartbeat file, refreshed every 10s
+# once the sensor is attached. 180s tolerance = 18 missed beats.
+livenessProbe:
+  exec:
+    command:
+      - /bin/sh
+      - -c
+      - test $(( $(date +%s) - $(stat -c %Y /var/run/ebpf-edr/heartbeat) )) -lt 180
+  initialDelaySeconds: 30
+  periodSeconds: 30
+  failureThreshold: 3
+
+readinessProbe:
+  exec:
+    command:
+      - /bin/sh
+      - -c
+      - test -f /var/run/ebpf-edr/heartbeat
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  failureThreshold: 3
+
 config:
   mode: audit
   output:
     format: json
     target: stdout
-  # If you want to send to a webhook (e.g., Splunk), uncomment and set these:
-  # target: webhook
-  # webhook_url: "https://splunk.internal:8088/services/collector/event"
-  # webhook_token: "Splunk ${SPLUNK_HEC_TOKEN}"
+    # To ship to a SIEM webhook (e.g. Splunk HEC), set target: webhook and
+    # provide the token via a Secret (recommended, see `secret` below) or
+    # inline (plaintext in the ConfigMap, not recommended):
+    # target: webhook
+    # webhook_url: "https://splunk.internal:8088/services/collector/event"
+    # webhook_token: "Splunk changeme"        # plaintext fallback
 
-# Create a secret if webhook token is used
+# Webhook token handling. Recommended: let the chart create the Secret
+# and the daemon receives it via ${SPLUNK_HEC_TOKEN} expansion — the
+# token never appears in the ConfigMap. Or point existingSecret at a
+# Secret you manage (key: splunk-token).
 secret:
   create: false
+  existingSecret: ""
   splunkToken: ""

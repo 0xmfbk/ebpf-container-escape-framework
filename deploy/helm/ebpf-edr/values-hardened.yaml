@@ -1,32 +1,36 @@
-# Hardened values for Enterprise Kubernetes deployment
+# Enterprise-hardened overlay. The chart defaults are already
+# least-privilege (v3.0.0); this profile tightens resources further and
+# pins ECS output. Use with:
+#   helm install ebpf-edr ./deploy/helm/ebpf-edr -n ebpf-edr \
+#     --create-namespace -f deploy/helm/ebpf-edr/values-hardened.yaml
 image:
   repository: 0xmfbk/ebpf-container-escape-framework
-  tag: v2.8.0
+  tag: v3.0.0
   pullPolicy: IfNotPresent
 
-# Strict Security Context
-podSecurityContext:
-  runAsUser: 0 # Required to read /proc of host processes
-  runAsGroup: 0
-  fsGroup: 0
-
+# Defaults already drop ALL and add only BPF/PERFMON/SYS_ADMIN; shown
+# here so the hardened profile is explicit and auditable.
 containerSecurityContext:
   privileged: false
   allowPrivilegeEscalation: false
   readOnlyRootFilesystem: true
   capabilities:
     drop: ["ALL"]
-    add: ["BPF", "PERFMON", "SYS_ADMIN", "SYS_RESOURCE"]
+    add: ["BPF", "PERFMON", "SYS_ADMIN"]
   seccompProfile:
     type: RuntimeDefault
 
+priorityClassName: system-node-critical
+
+# Tighter than defaults, but kept clear of the daemon's measured
+# footprint (28-36MB RSS at 25k forks) plus GC headroom.
 resources:
   limits:
-    memory: "128Mi"
-    cpu: "200m"
+    memory: "192Mi"
+    cpu: "300m"
   requests:
-    memory: "32Mi"
-    cpu: "10m"
+    memory: "48Mi"
+    cpu: "25m"
 
 config:
   mode: audit

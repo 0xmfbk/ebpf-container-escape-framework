@@ -6,15 +6,26 @@ ConditionPathExists=/sys/kernel/btf/vmlinux
 ConditionPathExists=@PREFIX@/lib/ebpf-edr/bpf_program.o
 
 [Service]
-Type=simple
+# Type=notify + WatchdogSec: the daemon signals READY=1 after attach and
+# pings WATCHDOG=1 every 10s; a hung event loop is restarted by systemd.
+Type=notify
+WatchdogSec=30
 ExecStart=@PREFIX@/sbin/ebpf-edr --config /etc/ebpf-edr/config.toml --bpf-obj @PREFIX@/lib/ebpf-edr/bpf_program.o
 
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
 LimitMEMLOCK=infinity
 LimitNOFILE=65536
+# A blinded security sensor is worse than no sensor: keep it out of the
+# first wave of OOM kills.
+OOMScoreAdjust=-500
 
+# CAP_BPF + CAP_PERFMON suffice to load/attach on kernel >= 5.8;
+# CAP_SYS_ADMIN covers kprobe attach and bpffs mounts on older kernels.
 AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN
 CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN
 
@@ -24,10 +35,16 @@ ProtectHome=true
 PrivateTmp=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
+ProtectKernelLogs=true
 ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
 RestrictRealtime=true
+RestrictNamespaces=yes
+RestrictSUIDSGID=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
 
 ReadWritePaths=/var/log /sys/fs/bpf
 RuntimeDirectory=ebpf-edr

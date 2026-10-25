@@ -147,12 +147,14 @@ verify-siem:
 .PHONY: docker-build k8s-apply k8s-delete
 
 docker-build:
-	docker build -t 0xmfbk/ebpf-container-escape-framework:v2.7.0 .
+	docker build -t 0xmfbk/ebpf-container-escape-framework:v3.0.0 .
 
 k8s-apply:
+	kubectl apply -f deploy/kubernetes/namespace.yaml
 	kubectl apply -f deploy/kubernetes/namespace-config.yaml
 	kubectl apply -f deploy/kubernetes/daemonset.yaml
 
 k8s-delete:
 	kubectl delete -f deploy/kubernetes/daemonset.yaml
 	kubectl delete -f deploy/kubernetes/namespace-config.yaml
+	kubectl delete -f deploy/kubernetes/namespace.yaml

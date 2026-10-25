@@ -228,6 +228,12 @@ func (c *Config) ApplyEnvAndFlags(logPath, logLevel, mode string) {
 	if v := os.Getenv("EDR_MODE"); v != "" {
 		c.Mode = v
 	}
+	if v := os.Getenv("EDR_WEBHOOK_URL"); v != "" {
+		c.Output.Webhook.URL = v
+	}
+	if v := os.Getenv("EDR_WEBHOOK_AUTH_HEADER"); v != "" {
+		c.Output.Webhook.AuthHeader = v
+	}
 	if logPath != "" {
 		c.Log.Path = logPath
 	}
@@ -237,4 +243,11 @@ func (c *Config) ApplyEnvAndFlags(logPath, logLevel, mode string) {
 	if mode != "" {
 		c.Mode = mode
 	}
+	// Expand ${VAR} references in webhook fields so credentials can come
+	// from the environment (Kubernetes Secrets, systemd Environment=)
+	// without appearing in config files, e.g.
+	//   auth_header = "Splunk ${SPLUNK_HEC_TOKEN}"
+	// Unset variables expand to the empty string, matching shell behavior.
+	c.Output.Webhook.URL = os.ExpandEnv(c.Output.Webhook.URL)
+	c.Output.Webhook.AuthHeader = os.ExpandEnv(c.Output.Webhook.AuthHeader)
 }

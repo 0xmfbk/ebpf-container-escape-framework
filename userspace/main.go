@@ -453,6 +453,18 @@ func main() {
 	log.Printf("[-] EDR Engine active (event version %d, mode=%s). Streaming to stdout + %s",
 		eventVersion, loaded.Mode, loaded.Log.Path)
 
+	// Readiness + liveness surface: touch a heartbeat file immediately
+	// (Kubernetes exec probes test its freshness) and tell systemd we are
+	// ready (Type=notify; no-op without NOTIFY_SOCKET).
+	heartbeatPath := os.Getenv("EDR_HEARTBEAT_PATH")
+	if heartbeatPath == "" {
+		heartbeatPath = "/var/run/ebpf-edr/heartbeat"
+	}
+	if err := touchHeartbeat(heartbeatPath); err != nil {
+		log.Printf("[-] heartbeat file unavailable (%v); probes/watchdogs relying on it will not see updates", err)
+	}
+	sdNotify("READY=1")
+
 	rd, err := ringbuf.NewReader(objs.Events)
 	if err != nil {
 		log.Fatalf("open ringbuf: %v", err)
@@ -637,8 +649,16 @@ func main() {
 	healthTicker := time.NewTicker(*flagHealth)
 	defer healthTicker.Stop()
 
+	// Beat faster than systemd's WatchdogSec (30s) and generously inside
+	// any liveness threshold built on the heartbeat file.
+	beatTicker := time.NewTicker(10 * time.Second)
+	defer beatTicker.Stop()
+
 	for {
 		select {
+		case <-beatTicker.C:
+			_ = touchHeartbeat(heartbeatPath)
+			sdNotify("WATCHDOG=1")
 		case <-healthTicker.C:
 			lcHits, lcMisses := lineageC.stats()
 			st := sink.Stats()
