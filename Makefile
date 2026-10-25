@@ -98,11 +98,14 @@ uninstall:
 test-attacks:
 	@bash scripts/test_attacks.sh
 
+demo:
+	@bash demo.sh
+
 systemd-reload:
 	@systemctl daemon-reload
 	@systemctl restart ebpf-edr.service || true
 
-.PHONY: install install-dry uninstall test-attacks systemd-reload
+.PHONY: install install-dry uninstall test-attacks demo systemd-reload
 
 # ---- Phase 2.5 ----
 .PHONY: ci fuzz test-race test-all clean-backups deps check-env
