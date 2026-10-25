@@ -2,13 +2,14 @@
 
 ## Supported Versions
 
-Only the latest release on the `main` branch is supported with security
+The `main` branch and the latest release tag are supported with security
 fixes. Older tags, forks, and downstream builds are not covered.
 
-| Version         | Supported |
-|-----------------|-----------|
-| `main` (latest) | Yes       |
-| Older releases  | No        |
+| Version                        | Supported |
+|--------------------------------|-----------|
+| `main` (latest)                | Yes       |
+| `v3.1.x` (latest release tag)  | Yes       |
+| Older releases                 | No        |
 
 ## Reporting a Vulnerability
 
