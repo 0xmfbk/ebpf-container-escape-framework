@@ -120,12 +120,17 @@ idle CPU is verified separately at 0.40–0.70%.
 
 - 15 BPF programs passing the kernel verifier (including `trace_openat2`)
 - Lineage cache bounded at exactly 20000/20000 under 25,000 forks
-- Ring buffer drops under 25k-fork stress: **0**
+- Ring buffer drops under 25k-fork stress: **0** (one run at 25062/25062
+  written with zero rate-limiting)
 - All 8 Phase-2.4 hook actions observed end to end under PID-based
   self-exclusion
 - Watchdog: `SIGSTOP`-frozen daemon detected and restarted by systemd
   within 30s (`Failed with result 'watchdog'` → auto-restart → streaming)
 - `systemd-analyze security` exposure level: **2.7 OK**
+- Live production confirmation: `Sensor_Heartbeat` alerts observed in the
+  file sink with embedded counters (`recv/written/dropped/rate_limited`),
+  `/metrics` scrapable on the systemd service, and the health line
+  reporting `degraded=false last_err=""` under load
 
 ## Install / Upgrade
 
