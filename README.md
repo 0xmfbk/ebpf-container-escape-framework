@@ -307,7 +307,6 @@ it automatically) it fires real syscalls and belongs on disposable hosts.
 | [`docs/MITRE_MATRIX.md`](docs/MITRE_MATRIX.md) | Full technique mapping |
 | [`docs/KERNEL_COMPATIBILITY.md`](docs/KERNEL_COMPATIBILITY.md) | Kernel floor, feature matrix, vmlinux.h pinning |
 | [`docs/WSL2.md`](docs/WSL2.md) | Building & running under WSL2 |
-| [`docs/RELEASE_v3.1.0.md`](docs/RELEASE_v3.1.0.md) · [`v3.0.0`](docs/RELEASE_v3.0.0.md) | Release notes |
 | [`SECURITY.md`](SECURITY.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) | Disclosure policy · contribution workflow · community standards |
 
 ---
